@@ -14,7 +14,7 @@ export function createLLM(): any {
     case 'groq':
       return new ChatGroq({
         apiKey: process.env.GROQ_API_KEY,
-        model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+        model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
         temperature: 0.3,
         maxTokens: 1024,
       });
@@ -42,7 +42,7 @@ export function createLLM(): any {
       console.warn(`[LLM] Unknown provider "${provider}", falling back to groq`);
       return new ChatGroq({
         apiKey: process.env.GROQ_API_KEY,
-        model: 'llama-3.3-70b-versatile',
+        model: 'openai/gpt-oss-20b',
         temperature: 0.3,
         maxTokens: 1024,
       });
