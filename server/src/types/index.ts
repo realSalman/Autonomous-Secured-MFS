@@ -14,7 +14,7 @@ export interface ITransaction {
   sender: string;
   receiver: string;
   amount: number;
-  status: 'completed' | 'failed' | 'pending';
+  status: 'completed' | 'failed' | 'pending' | 'blocked';
 }
 
 export interface IMessage {
@@ -36,6 +36,23 @@ export interface ITicket {
 export interface ICounter {
   name: string;
   value: number;
+}
+
+// ── Fraud types (Ojuri integration) ──
+
+export interface FraudDecision {
+  decision: 'ACCEPT' | 'REVIEW' | 'DECLINE';
+  fraud_probability: number | null;
+  reason_codes: ReasonCode[];
+  model_version: string | null;
+  audit_id: string | null;
+  degraded: boolean;
+}
+
+export interface ReasonCode {
+  code: string;
+  description: string;
+  contribution: number;
 }
 
 // AI graph state
@@ -64,3 +81,4 @@ export interface KnowledgeArticle {
   content: string;
   actions: string[];
 }
+

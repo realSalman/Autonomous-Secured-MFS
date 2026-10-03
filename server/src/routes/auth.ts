@@ -1,5 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { User } from '../models/User';
+import { getDb } from '../db/connection';
+import { users } from '../db/schema';
+import { eq } from 'drizzle-orm';
 import { validatePhone, validateName } from '../validation/index';
 
 const router = Router();
@@ -16,21 +18,22 @@ router.post('/login', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid phone number' });
     }
 
-    let user = await User.findOne({ phone });
+    const db = getDb();
+    let [user] = await db.select().from(users).where(eq(users.phone, phone));
 
     if (!user) {
-      user = await User.create({
+      [user] = await db.insert(users).values({
         phone,
         name: '',
-        balance: 10000,
-      });
+        balance: '10000',
+      }).returning();
       console.log(`[Auth] New user created: ${phone}`);
     }
 
     return res.json({
       phone: user.phone,
       name: user.name,
-      balance: user.balance,
+      balance: Number(user.balance),
       createdAt: user.createdAt,
     });
   } catch (error) {
@@ -50,7 +53,8 @@ router.get('/user/:phone', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid phone number' });
     }
 
-    const user = await User.findOne({ phone });
+    const db = getDb();
+    const [user] = await db.select().from(users).where(eq(users.phone, phone));
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -58,7 +62,7 @@ router.get('/user/:phone', async (req: Request, res: Response) => {
     return res.json({
       phone: user.phone,
       name: user.name,
-      balance: user.balance,
+      balance: Number(user.balance),
       createdAt: user.createdAt,
     });
   } catch (error) {
@@ -83,11 +87,11 @@ router.put('/user/:phone', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid name' });
     }
 
-    const user = await User.findOneAndUpdate(
-      { phone },
-      { name },
-      { new: true }
-    );
+    const db = getDb();
+    const [user] = await db.update(users)
+      .set({ name, updatedAt: new Date() })
+      .where(eq(users.phone, phone))
+      .returning();
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -96,7 +100,7 @@ router.put('/user/:phone', async (req: Request, res: Response) => {
     return res.json({
       phone: user.phone,
       name: user.name,
-      balance: user.balance,
+      balance: Number(user.balance),
     });
   } catch (error) {
     console.error('[Auth] Update user error:', error);

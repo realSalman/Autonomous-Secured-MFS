@@ -1,7 +1,7 @@
 import { StateGraph, Annotation, END, START } from '@langchain/langgraph';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { createLLM } from './llm';
-import { getUserInfo, getRecentTransactions } from './tools';
+import { getUserInfo, getRecentTransactions, getFraudStatus } from './tools';
 import { searchKnowledge } from './knowledge';
 import { IMessage, IUser, ITransaction, KnowledgeArticle } from '../types/index';
 
@@ -44,6 +44,10 @@ const SupportState = Annotation.Root({
     reducer: (_, b) => b ?? [],
     default: () => [],
   }),
+  fraudContext: Annotation<string>({
+    reducer: (_, b) => b ?? '',
+    default: () => '',
+  }),
 });
 
 type SupportStateType = typeof SupportState.State;
@@ -57,6 +61,7 @@ async function classifyNode(state: SupportStateType): Promise<Partial<SupportSta
 
 Classify the customer's message into exactly ONE of these categories:
 - payment_failure: Issues with failed, declined, or stuck payments
+- fraud_inquiry: Questions about blocked/declined transactions, security holds, fraud alerts, suspicious activity flags
 - wrong_recipient: Money sent to wrong number/person
 - balance_inquiry: Questions about account balance, missing money
 - account_issue: Login problems, profile updates, blocked accounts
@@ -72,7 +77,7 @@ Customer message: "${state.message}"`;
     const content = typeof response.content === 'string' ? response.content : '';
     const intent = content.trim().toLowerCase().replace(/[^a-z_]/g, '');
 
-    const validIntents = ['payment_failure', 'wrong_recipient', 'balance_inquiry', 'account_issue', 'cashout', 'general'];
+    const validIntents = ['payment_failure', 'fraud_inquiry', 'wrong_recipient', 'balance_inquiry', 'account_issue', 'cashout', 'general'];
     const finalIntent = validIntents.includes(intent) ? intent : 'general';
 
     return { intent: finalIntent };
@@ -86,20 +91,30 @@ Customer message: "${state.message}"`;
 
 async function retrieveNode(state: SupportStateType): Promise<Partial<SupportStateType>> {
   try {
-    const [userInfo, transactions] = await Promise.all([
+    const [userInfo, recentTx] = await Promise.all([
       getUserInfo(state.phone),
       getRecentTransactions(state.phone, 5),
     ]);
 
     const knowledge = searchKnowledge(state.intent, state.message);
 
-    return { userInfo, transactions, knowledge };
+    // If fraud inquiry, fetch fraud context for blocked/flagged transactions
+    let fraudContext = '';
+    if (state.intent === 'fraud_inquiry') {
+      const fraudStatus = await getFraudStatus(state.phone);
+      if (fraudStatus) {
+        fraudContext = fraudStatus;
+      }
+    }
+
+    return { userInfo, transactions: recentTx, knowledge, fraudContext };
   } catch (error) {
     console.error('[AI] Retrieval error:', error);
     return {
       userInfo: null,
       transactions: [],
       knowledge: searchKnowledge('general'),
+      fraudContext: '',
     };
   }
 }
@@ -144,6 +159,9 @@ ${kbContext}
 CONVERSATION HISTORY:
 ${historyContext || 'This is the start of the conversation.'}
 
+${state.fraudContext ? `FRAUD CONTEXT:
+${state.fraudContext}
+` : ''}
 GUIDELINES:
 - Be helpful, concise, and professional
 - Reference specific transaction IDs and amounts when relevant
@@ -153,7 +171,13 @@ GUIDELINES:
 - Keep responses under 150 words
 - Do NOT hallucinate transaction details — only reference data provided above
 - Mention specific balances, amounts, and dates from the context
-- If you need more information from the customer, ask specific questions`;
+- If you need more information from the customer, ask specific questions
+- When explaining fraud blocks, translate technical reasons to plain language:
+  - VELOCITY → "unusual number of transfers in a short time"
+  - PAGERANK → "the recipient has unusual transaction patterns"
+  - AMOUNT_DEVIATION → "this amount is unusually large for your account"
+- Assure the customer that a human reviewer will look at flagged transactions
+- Never reveal the exact fraud score to the customer`;
 
   try {
     const response = await llm.invoke([

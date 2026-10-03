@@ -1,11 +1,29 @@
 import { Router, Request, Response } from 'express';
-import { Ticket } from '../models/Ticket';
-import { User } from '../models/User';
-import { getNextTicketToken } from '../models/Counter';
+import { getDb } from '../db/connection';
+import { tickets, users, counters } from '../db/schema';
+import { eq, sql, or, inArray, desc } from 'drizzle-orm';
 import { runSupportAgent } from '../ai/graph';
 import { validatePhone, validateMessage } from '../validation/index';
+import { IMessage } from '../types/index';
 
 const router = Router();
+
+/**
+ * Get next sequential ticket token.
+ * Atomically increments and returns formatted token like TKT-0001.
+ */
+async function getNextTicketToken(): Promise<string> {
+  const db = getDb();
+  const [counter] = await db.insert(counters)
+    .values({ name: 'ticket', value: 1 })
+    .onConflictDoUpdate({
+      target: counters.name,
+      set: { value: sql`${counters.value} + 1` },
+    })
+    .returning();
+  const num = counter.value.toString().padStart(4, '0');
+  return `TKT-${num}`;
+}
 
 /**
  * POST /api/tickets
@@ -24,25 +42,47 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Check for existing open ticket for this user
-    let ticket = await Ticket.findOne({
-      phone,
-      status: { $in: ['open', 'in_progress'] },
-    });
+    const db = getDb();
 
-    if (!ticket) {
-      const token = await getNextTicketToken();
-      ticket = await Ticket.create({
+    // Check for existing open ticket for this user
+    const [existingTicket] = await db.select().from(tickets)
+      .where(
+        sql`${tickets.phone} = ${phone} AND ${tickets.status} IN ('open', 'in_progress')`
+      )
+      .limit(1);
+
+    let ticketId: number;
+    let token: string;
+    let ticketMessages: IMessage[];
+    let ticketStatus: string;
+    let ticketCategory: string;
+    let ticketCreatedAt: Date;
+
+    if (existingTicket) {
+      ticketId = existingTicket.id;
+      token = existingTicket.token;
+      ticketMessages = (existingTicket.messages as IMessage[]) || [];
+      ticketStatus = existingTicket.status;
+      ticketCategory = existingTicket.category;
+      ticketCreatedAt = existingTicket.createdAt;
+    } else {
+      token = await getNextTicketToken();
+      const [newTicket] = await db.insert(tickets).values({
         token,
         phone,
         status: 'open',
         category: 'general',
         messages: [],
-      });
+      }).returning();
+      ticketId = newTicket.id;
+      ticketMessages = [];
+      ticketStatus = 'open';
+      ticketCategory = 'general';
+      ticketCreatedAt = newTicket.createdAt;
     }
 
     // Add customer message
-    ticket.messages.push({
+    ticketMessages.push({
       role: 'customer',
       content: message,
       timestamp: new Date(),
@@ -51,13 +91,11 @@ router.post('/', async (req: Request, res: Response) => {
     // Run AI agent
     let aiResult;
     try {
-      aiResult = await runSupportAgent(phone, message, ticket.messages);
-
-      // Update ticket with AI classification
-      ticket.category = aiResult.intent;
+      aiResult = await runSupportAgent(phone, message, ticketMessages);
+      ticketCategory = aiResult.intent;
 
       // Add AI response as a message
-      ticket.messages.push({
+      ticketMessages.push({
         role: 'ai',
         content: aiResult.suggestedReply,
         timestamp: new Date(),
@@ -65,7 +103,7 @@ router.post('/', async (req: Request, res: Response) => {
     } catch (aiError) {
       console.error('[Tickets] AI agent error:', aiError);
       const fallbackReply = 'Thank you for reaching out. A support agent will assist you shortly.';
-      ticket.messages.push({
+      ticketMessages.push({
         role: 'ai',
         content: fallbackReply,
         timestamp: new Date(),
@@ -78,19 +116,26 @@ router.post('/', async (req: Request, res: Response) => {
       };
     }
 
-    ticket.updatedAt = new Date();
-    await ticket.save();
+    const now = new Date();
+    const [updatedTicket] = await db.update(tickets)
+      .set({
+        messages: ticketMessages,
+        category: ticketCategory,
+        updatedAt: now,
+      })
+      .where(eq(tickets.id, ticketId))
+      .returning();
 
     return res.json({
       ticket: {
-        _id: ticket._id,
-        token: ticket.token,
-        phone: ticket.phone,
-        status: ticket.status,
-        category: ticket.category,
-        messages: ticket.messages,
-        createdAt: ticket.createdAt,
-        updatedAt: ticket.updatedAt,
+        _id: updatedTicket.id,
+        token: updatedTicket.token,
+        phone: updatedTicket.phone,
+        status: updatedTicket.status,
+        category: updatedTicket.category,
+        messages: updatedTicket.messages,
+        createdAt: updatedTicket.createdAt,
+        updatedAt: updatedTicket.updatedAt,
       },
       aiResponse: aiResult.suggestedReply,
     });
@@ -109,34 +154,49 @@ router.get('/', async (req: Request, res: Response) => {
     const status = req.query.status as string | undefined;
     const search = req.query.search as string | undefined;
 
-    const filter: Record<string, unknown> = {};
+    const db = getDb();
+
+    let query = db.select().from(tickets).orderBy(desc(tickets.updatedAt));
+
+    let ticketList;
     if (status && ['open', 'in_progress', 'resolved'].includes(status)) {
-      filter.status = status;
+      ticketList = await db.select().from(tickets)
+        .where(eq(tickets.status, status))
+        .orderBy(desc(tickets.updatedAt));
+    } else {
+      ticketList = await db.select().from(tickets).orderBy(desc(tickets.updatedAt));
     }
 
-    let tickets = await Ticket.find(filter)
-      .sort({ updatedAt: -1 })
-      .lean();
-
     // Search filter: match token, phone, or message content
+    let filtered = ticketList;
     if (search) {
       const q = search.toLowerCase();
-      tickets = tickets.filter(
+      filtered = ticketList.filter(
         (t) =>
           t.token.toLowerCase().includes(q) ||
           t.phone.includes(q) ||
-          t.messages.some((m) => m.content.toLowerCase().includes(q))
+          (t.messages as IMessage[]).some((m) => m.content.toLowerCase().includes(q))
       );
     }
 
     // Attach user info to each ticket
-    const phones = [...new Set(tickets.map((t) => t.phone))];
-    const users = await User.find({ phone: { $in: phones } }).lean();
-    const userMap = new Map(users.map((u) => [u.phone, u]));
+    const phones = [...new Set(filtered.map((t) => t.phone))];
+    let userList: any[] = [];
+    if (phones.length > 0) {
+      userList = await db.select().from(users).where(inArray(users.phone, phones));
+    }
+    const userMap = new Map(userList.map((u) => [u.phone, u]));
 
-    const ticketsWithUser = tickets.map((t) => ({
+    const ticketsWithUser = filtered.map((t) => ({
+      _id: t.id,
       ...t,
-      user: userMap.get(t.phone) || null,
+      user: userMap.get(t.phone)
+        ? {
+            phone: userMap.get(t.phone)!.phone,
+            name: userMap.get(t.phone)!.name,
+            balance: Number(userMap.get(t.phone)!.balance),
+          }
+        : null,
     }));
 
     return res.json(ticketsWithUser);
@@ -152,14 +212,24 @@ router.get('/', async (req: Request, res: Response) => {
  */
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const ticket = await Ticket.findById(req.params.id).lean();
+    const db = getDb();
+    const ticketId = parseInt(req.params.id, 10);
+    if (isNaN(ticketId)) {
+      return res.status(400).json({ error: 'Invalid ticket ID' });
+    }
+
+    const [ticket] = await db.select().from(tickets).where(eq(tickets.id, ticketId));
     if (!ticket) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    const user = await User.findOne({ phone: ticket.phone }).lean();
+    const [user] = await db.select().from(users).where(eq(users.phone, ticket.phone));
 
-    return res.json({ ...ticket, user });
+    return res.json({
+      _id: ticket.id,
+      ...ticket,
+      user: user ? { phone: user.phone, name: user.name, balance: Number(user.balance) } : null,
+    });
   } catch (error) {
     console.error('[Tickets] Get error:', error);
     return res.status(500).json({ error: 'Internal server error' });
@@ -172,32 +242,40 @@ router.get('/:id', async (req: Request, res: Response) => {
  */
 router.post('/:id/messages', async (req: Request, res: Response) => {
   try {
-    const message = validateMessage(req.body.message);
+    const messageContent = validateMessage(req.body.message);
     const role = req.body.role as 'customer' | 'agent';
 
-    if (!message) {
+    if (!messageContent) {
       return res.status(400).json({ error: 'Message is required' });
     }
     if (!['customer', 'agent'].includes(role)) {
       return res.status(400).json({ error: 'Invalid role' });
     }
 
-    const ticket = await Ticket.findById(req.params.id);
+    const db = getDb();
+    const ticketId = parseInt(req.params.id, 10);
+    if (isNaN(ticketId)) {
+      return res.status(400).json({ error: 'Invalid ticket ID' });
+    }
+
+    const [ticket] = await db.select().from(tickets).where(eq(tickets.id, ticketId));
     if (!ticket) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    ticket.messages.push({
+    const ticketMessages = (ticket.messages as IMessage[]) || [];
+
+    ticketMessages.push({
       role,
-      content: message,
+      content: messageContent,
       timestamp: new Date(),
     });
 
     // If customer message, also run AI for copilot suggestion
     if (role === 'customer') {
       try {
-        const aiResult = await runSupportAgent(ticket.phone, message, ticket.messages);
-        ticket.messages.push({
+        const aiResult = await runSupportAgent(ticket.phone, messageContent, ticketMessages);
+        ticketMessages.push({
           role: 'ai',
           content: aiResult.suggestedReply,
           timestamp: new Date(),
@@ -207,14 +285,24 @@ router.post('/:id/messages', async (req: Request, res: Response) => {
       }
     }
 
+    let newStatus = ticket.status;
     if (role === 'agent' && ticket.status === 'open') {
-      ticket.status = 'in_progress';
+      newStatus = 'in_progress';
     }
 
-    ticket.updatedAt = new Date();
-    await ticket.save();
+    const [updatedTicket] = await db.update(tickets)
+      .set({
+        messages: ticketMessages,
+        status: newStatus,
+        updatedAt: new Date(),
+      })
+      .where(eq(tickets.id, ticketId))
+      .returning();
 
-    return res.json(ticket);
+    return res.json({
+      _id: updatedTicket.id,
+      ...updatedTicket,
+    });
   } catch (error) {
     console.error('[Tickets] Add message error:', error);
     return res.status(500).json({ error: 'Internal server error' });
@@ -227,13 +315,21 @@ router.post('/:id/messages', async (req: Request, res: Response) => {
  */
 router.post('/:id/suggest', async (req: Request, res: Response) => {
   try {
-    const ticket = await Ticket.findById(req.params.id);
+    const db = getDb();
+    const ticketId = parseInt(req.params.id, 10);
+    if (isNaN(ticketId)) {
+      return res.status(400).json({ error: 'Invalid ticket ID' });
+    }
+
+    const [ticket] = await db.select().from(tickets).where(eq(tickets.id, ticketId));
     if (!ticket) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
+    const ticketMessages = (ticket.messages as IMessage[]) || [];
+
     // Find last customer message
-    const lastCustomerMsg = [...ticket.messages]
+    const lastCustomerMsg = [...ticketMessages]
       .reverse()
       .find((m) => m.role === 'customer');
 
@@ -244,7 +340,7 @@ router.post('/:id/suggest', async (req: Request, res: Response) => {
     const aiResult = await runSupportAgent(
       ticket.phone,
       lastCustomerMsg.content,
-      ticket.messages
+      ticketMessages
     );
 
     return res.json({
@@ -270,17 +366,25 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid status' });
     }
 
-    const ticket = await Ticket.findByIdAndUpdate(
-      req.params.id,
-      { status, updatedAt: new Date() },
-      { new: true }
-    );
+    const db = getDb();
+    const ticketId = parseInt(req.params.id, 10);
+    if (isNaN(ticketId)) {
+      return res.status(400).json({ error: 'Invalid ticket ID' });
+    }
 
-    if (!ticket) {
+    const [updatedTicket] = await db.update(tickets)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(tickets.id, ticketId))
+      .returning();
+
+    if (!updatedTicket) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    return res.json(ticket);
+    return res.json({
+      _id: updatedTicket.id,
+      ...updatedTicket,
+    });
   } catch (error) {
     console.error('[Tickets] Status update error:', error);
     return res.status(500).json({ error: 'Internal server error' });

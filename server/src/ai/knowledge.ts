@@ -121,6 +121,32 @@ Resolution:
 For any issue not covered above, collect details and escalate to appropriate team.`,
     actions: ['provide_info'],
   },
+  {
+    id: 'kb-007',
+    title: 'Fraud Detection — Blocked or Flagged Transactions',
+    category: 'fraud_inquiry',
+    keywords: ['blocked', 'declined', 'fraud', 'security', 'suspicious', 'flagged', 'security hold', 'under review', 'fraud alert', 'blocked transaction'],
+    content: `When a transaction is flagged by our fraud detection system:
+
+DECLINE (Blocked): The transaction was automatically blocked. The customer's money was NOT deducted.
+Common reasons:
+- Unusual transaction velocity (too many transfers in a short time)
+- Amount significantly higher than account's normal pattern
+- Recipient associated with suspicious activity patterns
+- New account attempting large transfers
+
+REVIEW (Flagged): The transaction went through but is flagged for human review within 24 hours.
+
+Resolution process:
+1. A fraud analyst reviews the flagged transaction
+2. If legitimate, the block is lifted and the transaction can be retried
+3. If confirmed fraud, the account may be temporarily restricted
+4. Customer is notified of the outcome
+
+Important: Never reveal exact fraud scores to customers. Explain reasons in plain language.
+For blocked transactions, advise the customer to wait for review or contact support if urgent.`,
+    actions: ['check_fraud_status', 'escalate_fraud_review'],
+  },
 ];
 
 /**

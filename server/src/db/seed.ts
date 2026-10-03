@@ -1,108 +1,107 @@
 import dotenv from 'dotenv';
-dotenv.config({ path: '../.env' });
+dotenv.config({ path: '../.env' });   // local dev (CWD = server/)
+dotenv.config({ path: '.env' });      // Docker or project root CWD
 
-import { connectDB } from './connection';
-import { User } from '../models/User';
-import { Transaction } from '../models/Transaction';
-import { Ticket } from '../models/Ticket';
-import { Counter } from '../models/Counter';
+import { connectDB, initTables, getDb } from './connection';
+import { users, transactions, tickets, counters } from './schema';
 
 async function seed() {
   await connectDB();
+  await initTables();
+
+  const db = getDb();
   console.log('[Seed] Clearing existing data...');
 
-  await Promise.all([
-    User.deleteMany({}),
-    Transaction.deleteMany({}),
-    Ticket.deleteMany({}),
-    Counter.deleteMany({}),
-  ]);
+  await db.delete(tickets);
+  await db.delete(transactions);
+  await db.delete(users);
+  await db.delete(counters);
 
   // ── Users ──
   console.log('[Seed] Creating users...');
-  const users = await User.insertMany([
-    { phone: '01712345678', name: 'Rahim Ahmed', balance: 15000 },
-    { phone: '01812345678', name: 'Karim Hassan', balance: 8500 },
-    { phone: '01912345678', name: 'Fatima Khan', balance: 22000 },
-    { phone: '01612345678', name: 'Nusrat Jahan', balance: 5200 },
-    { phone: '01512345678', name: 'Tanvir Rahman', balance: 31000 },
-    { phone: '01412345678', name: 'Ayesha Siddiqui', balance: 12700 },
-    { phone: '01312345678', name: 'Imran Hossain', balance: 900 },
-    { phone: '01112345678', name: 'Sabrina Akter', balance: 44000 },
-  ]);
-  console.log(`[Seed] Created ${users.length} users`);
+  const insertedUsers = await db.insert(users).values([
+    { phone: '01712345678', name: 'Rahim Ahmed', balance: '15000' },
+    { phone: '01812345678', name: 'Karim Hassan', balance: '8500' },
+    { phone: '01912345678', name: 'Fatima Khan', balance: '22000' },
+    { phone: '01612345678', name: 'Nusrat Jahan', balance: '5200' },
+    { phone: '01512345678', name: 'Tanvir Rahman', balance: '31000' },
+    { phone: '01412345678', name: 'Ayesha Siddiqui', balance: '12700' },
+    { phone: '01312345678', name: 'Imran Hossain', balance: '900' },
+    { phone: '01112345678', name: 'Sabrina Akter', balance: '44000' },
+  ]).returning();
+  console.log(`[Seed] Created ${insertedUsers.length} users`);
 
   // ── Transactions ──
   console.log('[Seed] Creating transactions...');
   const now = new Date();
   const hour = 3600000;
 
-  const transactions = await Transaction.insertMany([
+  const insertedTx = await db.insert(transactions).values([
     {
-      tx_id: 'TX-1001',
+      txId: 'TX-1001',
       sender: '01712345678',
       receiver: '01812345678',
-      amount: 2500,
+      amount: '2500',
       status: 'completed',
       time: new Date(now.getTime() - 2 * hour),
     },
     {
-      tx_id: 'TX-1002',
+      txId: 'TX-1002',
       sender: '01912345678',
       receiver: '01712345678',
-      amount: 5000,
+      amount: '5000',
       status: 'completed',
       time: new Date(now.getTime() - 5 * hour),
     },
     {
-      tx_id: 'TX-1003',
+      txId: 'TX-1003',
       sender: '01712345678',
       receiver: '01612345678',
-      amount: 1000,
+      amount: '1000',
       status: 'completed',
       time: new Date(now.getTime() - 8 * hour),
     },
     {
-      tx_id: 'TX-1004',
+      txId: 'TX-1004',
       sender: '01512345678',
       receiver: '01412345678',
-      amount: 7500,
+      amount: '7500',
       status: 'completed',
       time: new Date(now.getTime() - 12 * hour),
     },
     {
-      tx_id: 'TX-1005',
+      txId: 'TX-1005',
       sender: '01312345678',
       receiver: '01812345678',
-      amount: 3000,
+      amount: '3000',
       status: 'failed',
       time: new Date(now.getTime() - 1 * hour),
     },
     {
-      tx_id: 'TX-1006',
+      txId: 'TX-1006',
       sender: '01812345678',
       receiver: '01112345678',
-      amount: 1500,
+      amount: '1500',
       status: 'completed',
       time: new Date(now.getTime() - 3 * hour),
     },
     {
-      tx_id: 'TX-1007',
+      txId: 'TX-1007',
       sender: '01612345678',
       receiver: '01912345678',
-      amount: 800,
+      amount: '800',
       status: 'completed',
       time: new Date(now.getTime() - 24 * hour),
     },
-  ]);
-  console.log(`[Seed] Created ${transactions.length} transactions`);
+  ]).returning();
+  console.log(`[Seed] Created ${insertedTx.length} transactions`);
 
   // ── Tickets ──
   console.log('[Seed] Creating tickets...');
 
-  await Counter.create({ name: 'ticket', value: 3 });
+  await db.insert(counters).values({ name: 'ticket', value: 3 });
 
-  const tickets = await Ticket.insertMany([
+  const insertedTickets = await db.insert(tickets).values([
     {
       token: 'TKT-0001',
       phone: '01712345678',
@@ -178,8 +177,8 @@ async function seed() {
       createdAt: new Date(now.getTime() - 3 * hour),
       updatedAt: new Date(now.getTime() - 2 * hour),
     },
-  ]);
-  console.log(`[Seed] Created ${tickets.length} tickets`);
+  ]).returning();
+  console.log(`[Seed] Created ${insertedTickets.length} tickets`);
 
   console.log('[Seed] ✓ Database seeded successfully');
   process.exit(0);

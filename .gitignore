@@ -1,4 +1,26 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Environment (contains secrets)
 .env
+
+# Logs
 *.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Docker data (local volumes)
+pgdata/
+redisdata/
+
+# Editor
+.kilo/

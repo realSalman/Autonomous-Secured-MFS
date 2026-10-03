@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { CustomerPage } from './pages/CustomerPage';
 import { AdminPage } from './pages/AdminPage';
+import { FraudDashboardPage } from './pages/FraudDashboardPage';
 
 export default function App() {
   return (
@@ -19,7 +20,13 @@ export default function App() {
               to="/admin"
               className={({ isActive }) => isActive ? 'active' : ''}
             >
-              Admin Dashboard
+              Support
+            </NavLink>
+            <NavLink
+              to="/fraud"
+              className={({ isActive }) => isActive ? 'active' : ''}
+            >
+              Fraud Center
             </NavLink>
           </nav>
         </header>
@@ -28,6 +35,7 @@ export default function App() {
           <Routes>
             <Route path="/customer" element={<CustomerPage />} />
             <Route path="/admin" element={<AdminPage />} />
+            <Route path="/fraud" element={<FraudDashboardPage />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Routes>
         </main>

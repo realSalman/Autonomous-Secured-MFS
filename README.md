@@ -1,87 +1,79 @@
-# SupportIQ
+# SecureAssist MFS
 
-AI-powered customer support platform for mobile financial services (MFS).
-
-## Architecture
-
-```
-Customer sends message
-  → Sequential ticket token generated (TKT-0001)
-  → Stored with user's phone number
-  → LangGraph agent: classify intent → retrieve context → generate response
-  → AI responds instantly to customer
-  → Admin sees ticket + AI copilot suggestion
-  → Agent can edit and send
-```
-
-### Tech Stack
-
-- **Frontend**: React + TypeScript + Vite
-- **Backend**: Node.js + Express + TypeScript
-- **Database**: MongoDB (Atlas)
-- **AI**: LangGraph.js with Groq/Gemini/OpenRouter LLM providers
+AI-powered customer support platform for mobile financial services (MFS) with integrated fraud detection.
 
 ## Quick Start
 
-### 1. Setup environment
+**Prerequisite:** [Docker Desktop](https://docker.com)
 
 ```bash
-cp .env.example .env
-# Edit .env with your MongoDB URI and API keys
+git clone <repo-url>
+cd SecureAssist MFS
+cp .env.example .env        # add your LLM API key
+docker compose up -d         # start everything
 ```
 
-### 2. Install & run
+**Open:** http://localhost:3001
 
-```bash
-npm install
-npm run seed    # Seed database with sample data
-npm run dev     # Starts both server (:3001) and client (:3000)
-```
+That's it. One command starts: PostgreSQL, Redis, Kafka, (RDA + PAA), the app, and seeds sample data.
 
-### 3. Open in browser
+## Features
 
-- **Customer Dashboard**: http://localhost:3000/customer
-- **Admin Dashboard**: http://localhost:3000/admin
-
-### Demo Accounts
-
-| Phone | Name | Balance |
-|-------|------|---------|
-| 01712345678 | Rahim Ahmed | ৳15,000 |
-| 01812345678 | Karim Hassan | ৳8,500 |
-| 01912345678 | Fatima Khan | ৳22,000 |
+- **AI Support Agent** — LangGraph-powered intent classification + response generation
+- **Real-time Fraud Detection** — RDA scoring (ACCEPT / REVIEW / DECLINE)
+- **Fraud Dashboard** — Stats, audit log, reason codes, decision overrides
+- **Webhook Automation** — Auto-creates tickets when transactions are blocked
+- **Admin Dashboard** — Ticket management, AI copilot, conversation panel
+- **Customer Portal** — Send money, view transactions, create support tickets
 
 ## Environment Variables
 
+Edit `.env` — only the LLM key is required:
+
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `MONGODB_URI` | Yes | MongoDB connection string |
-| `GROQ_API_KEY` | Yes (default) | Groq API key |
-| `LLM_PROVIDER` | No | `groq` (default), `gemini`, or `openrouter` |
-| `GROQ_MODEL` | No | Default: `llama-3.3-70b-versatile` |
-| `GEMINI_API_KEY` | If using Gemini | Google AI API key |
-| `OPENROUTER_API_KEY` | If using OpenRouter | OpenRouter API key |
+| `LLM_PROVIDER` | ✅ | `groq`, `gemini`, or `openrouter` |
+| `GROQ_API_KEY` | if groq | Groq API key |
+| `GEMINI_API_KEY` | if gemini | Google AI key |
+| `OPENROUTER_API_KEY` | if openrouter | OpenRouter key |
 
-## Project Structure
+## Local Development
 
+For hot-reload (requires Node.js 18+):
+
+```bash
+cp .env.example .env
+docker compose up postgres -d    # just the database
+npm install
+npm run seed
+npm run dev                      # client:3000 + server:3001
 ```
-SupportIQ/
-├── client/                 # React frontend
-│   └── src/
-│       ├── api/            # API client
-│       ├── components/
-│       │   ├── admin/      # Admin dashboard components
-│       │   ├── customer/   # Customer-facing components
-│       │   └── shared/     # Shared UI components
-│       ├── pages/          # Page-level components
-│       └── types/          # TypeScript types
-├── server/                 # Express backend
-│   └── src/
-│       ├── ai/             # LangGraph agent, LLM, tools, knowledge
-│       ├── db/             # MongoDB connection, seed script
-│       ├── models/         # Mongoose models
-│       ├── routes/         # API routes
-│       ├── types/          # Server types
-│       └── validation/     # Input validation
-└── .env                    # Environment variables
-```
+
+## API Endpoints
+
+### Core
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/auth/login` | Login by phone |
+| POST | `/api/transactions/send` | Send money (fraud-scored) |
+| GET | `/api/transactions/:phone` | Transaction history |
+| POST | `/api/tickets` | Create ticket (AI responds) |
+| GET | `/api/tickets` | List tickets |
+
+### Fraud
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/fraud/audit` | Decision audit log |
+| GET | `/api/fraud/audit/stats/summary` | Fraud statistics |
+| POST | `/api/fraud/override/:auditId` | Override decision |
+| GET | `/api/fraud/rules` | List fraud rules |
+| GET | `/api/fraud/models` | List model versions |
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `docker compose up -d` | Start everything |
+| `docker compose down` | Stop everything |
+| `docker compose logs -f app` | Watch app logs |
+| `npm run dev` | Local dev (hot-reload) |

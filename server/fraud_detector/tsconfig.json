@@ -1,0 +1,55 @@
+{
+  "extends": "fastify-tsconfig",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "declaration": true,
+    "removeComments": true,
+    "noLib": false,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "esModuleInterop": true,
+    "outDir": "./dist",
+    "baseUrl": ".",
+    "target": "es6",
+    "sourceMap": true,
+    "paths": {
+      "@config/*": ["src/config/*"],
+      "@shared/*": ["src/shared/*"],
+      "@utils/*": ["src/shared/utils/*"]
+    },
+
+    // Strict-family flags. We enable the subset that compiles cleanly
+    // against the current codebase; the rest are noted below with the
+    // number of pre-existing violations a future PR would have to
+    // resolve. Run `tsc --strict --noEmit` to see all of them.
+    //
+    //   strictNullChecks                 catches null/undefined misuse
+    //   strictBindCallApply              types .bind/.call/.apply args
+    //   strictFunctionTypes              variance-aware function checks
+    //   alwaysStrict                     emits "use strict" everywhere
+    //   noImplicitThis                   refuses `this: any`
+    //   noFallthroughCasesInSwitch       requires break/return between cases
+    //   useUnknownInCatchVariables       catch (err: unknown) by default
+    "strictNullChecks": true,
+    "strictBindCallApply": true,
+    "strictFunctionTypes": true,
+    "alwaysStrict": true,
+    "noImplicitThis": true,
+    "noFallthroughCasesInSwitch": true,
+    "useUnknownInCatchVariables": true,
+
+    // Deliberately OFF, with rationale:
+    //
+    //   strictPropertyInitialization     Objection.js models declare fields
+    //                                    without initializers (ORM hydrates).
+    //                                    Tightening needs `!` on every column.
+    //   noUncheckedIndexedAccess         23 violations — every `array[i]` /
+    //                                    `obj[k]` needs a nullable guard.
+    "noImplicitAny": false,
+    "strictPropertyInitialization": false,
+    "noImplicitOverride": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.json", "knexfile.d.ts"],
+  "exclude": ["node_modules", "**/*.spec.ts", "**/*.test.ts"]
+}

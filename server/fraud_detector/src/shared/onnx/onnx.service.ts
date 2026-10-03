@@ -1,0 +1,839 @@
+import * as ort from "onnxruntime-node";
+import { container, singleton } from "tsyringe";
+import appConfig from "@config/app.config";
+import { createServiceLogger, TraceContext } from "@shared/utils/logger/service-logger";
+import { metricsService } from "@shared/metrics/metrics.service";
+import { createCircuitBreaker } from "@shared/circuit-breaker/circuit-breaker";
+import type CircuitBreaker from "opossum";
+import type { ModelVersion } from "@shared/models/model/model-version.model";
+import { loadCatalog } from "@shared/features/feature-catalog";
+import { applyCalibration, loadCalibration, loadReasonWeights } from "./calibration";
+import { setModelWeights } from "./reason-codes";
+import { CalibrationSpec, InferenceOutcome } from "./onnx.types";
+import fs from "fs";
+import fsp from "fs/promises";
+import path from "path";
+
+const onnxLogger = createServiceLogger("OnnxService");
+
+/**
+ * ONNX Runtime service for ML model inference
+ * Handles model loading, inference, and hot-reloading.
+ *
+ * Hot-reload now follows the model registry — when MLA registers a
+ * new model and POSTs `status=ACTIVE`, `ModelRegistryService` notifies
+ * us via its `onActiveChange` listener. We resolve the row's
+ * `sourceUri` (a relative path like `models/versions/v1.2.0/model.onnx`),
+ * load the bytes, and atomically swap the session. The legacy
+ * `MODEL_REGISTRY_URL` HTTP polling is retired in favour of this
+ * filesystem-driven flow — `models/` is bind-mounted into RDA so any
+ * write by MLA on the host is immediately visible.
+ */
+@singleton()
+class OnnxService {
+  // Pool of identical ONNX InferenceSession instances. onnxruntime-node
+  // serializes concurrent `session.run` calls at the session level, so a
+  // single shared session caps inference parallelism at one in-flight call
+  // regardless of CPU count. Pooling N sessions and round-robin'ing across
+  // them removes that ceiling. The model is loaded into each session, so
+  // total memory cost scales linearly with pool size — bound the pool
+  // (default ceil(cpus/2), capped at 8) and document the tradeoff for
+  // operators deploying multi-GB models.
+  private sessions: ort.InferenceSession[] = [];
+  private nextSessionIndex = 0;
+  // Shadow model pool — small (2 sessions max): shadow scoring is
+  // observational, so a little serialization is an acceptable trade
+  // against doubling model memory.
+  private shadowSessions: ort.InferenceSession[] = [];
+  private nextShadowIndex = 0;
+  private shadowSourceKey: string | null = null;
+  private modelPath: string;
+  private inferenceCircuitBreaker!: CircuitBreaker<any[], any>;
+  private isModelLoaded: boolean = false;
+  private isCalibrationHealthy: boolean = false;
+  private contextSensitivityGap: number | null = null;
+  private unsubscribeActiveChange: (() => void) | null = null;
+  private calibration: CalibrationSpec | null = null;
+
+  constructor() {
+    this.modelPath = path.resolve(appConfig.onnx.modelPath);
+    this.setupCircuitBreaker();
+  }
+
+  private nextSession(): ort.InferenceSession {
+    const len = this.sessions.length;
+    const idx = this.nextSessionIndex % len;
+    this.nextSessionIndex = (this.nextSessionIndex + 1) % len;
+    return this.sessions[idx]!;
+  }
+
+  private setupCircuitBreaker(): void {
+    // Create circuit breaker for inference
+    this.inferenceCircuitBreaker = createCircuitBreaker(
+      async (features: Float32Array): Promise<InferenceOutcome> => {
+        const score = await this.runInference(features);
+        return { score, calibratedScore: this.calibrate(score), degraded: false };
+      },
+      {
+        name: "onnx-inference",
+        timeout: appConfig.circuitBreaker.onnx.timeout,
+        errorThresholdPercentage: appConfig.circuitBreaker.onnx.errorThresholdPercentage,
+        resetTimeout: appConfig.circuitBreaker.onnx.resetTimeout,
+        // `degraded` is what makes the fallback distinguishable downstream:
+        // without it an audit row cannot tell "the model scored 1.0" from
+        // "inference never ran". The caller — not the breaker — decides
+        // what a degraded score means for the decision.
+        fallback: (): InferenceOutcome => {
+          onnxLogger.error("fallback", "ONNX circuit breaker fallback triggered", {
+            traceId: TraceContext.getTraceId(),
+          });
+          return { score: 1.0, calibratedScore: null, degraded: true };
+        },
+      }
+    );
+  }
+
+  private calibrate(raw: number): number | null {
+    return this.calibration ? applyCalibration(this.calibration, raw) : null;
+  }
+
+  private loadCalibrationFor(modelFilePath: string): void {
+    try {
+      const weights = loadReasonWeights(modelFilePath);
+      setModelWeights(weights);
+      if (weights) {
+        onnxLogger.success("loadCalibration", "Reason-code weights taken from model importances", {
+          features: Object.keys(weights).length,
+        });
+      }
+      this.calibration = loadCalibration(modelFilePath);
+      if (this.calibration) {
+        onnxLogger.success("loadCalibration", "Isotonic calibration loaded", {
+          breakpoints: this.calibration.xThresholds.length,
+          mode: appConfig.onnx.calibrationMode,
+        });
+      } else {
+        onnxLogger.info("loadCalibration", "No calibration block in meta.json — serving raw scores", {
+          modelFilePath,
+        });
+      }
+    } catch (err) {
+      this.calibration = null;
+      setModelWeights(null);
+      onnxLogger.warn("loadCalibration", "Calibration load failed — serving raw scores", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  hasCalibration(): boolean {
+    return this.calibration !== null;
+  }
+
+  /**
+   * Initialize ONNX model - load on startup
+   */
+  async initialize(): Promise<void> {
+    try {
+      this.loadCalibrationFor(this.modelPath);
+      await this.loadModel();
+      await this.runCalibrationProbe();
+      await this.runContextSensitivityProbe();
+      // Subscribe synchronously so any ACTIVE-flip that happens between
+      // `loadModel()` and the first request can't slip past us. The
+      // dynamic import is still required to break the circular dep with
+      // ModelRegistryService, but we now `await` it so initialize() does
+      // not return until the listener is wired.
+      await this.subscribeToRegistry();
+      onnxLogger.success("initialize", "ONNX service initialized successfully", {});
+    } catch (err) {
+      onnxLogger.error("initialize", "Failed to initialize ONNX service", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  }
+
+  /**
+   * Sanity-probe the loaded model right after `loadModel()`. Catches
+   * two failure modes that previously slipped past every health check:
+   *
+   * 1. mockInference fallback — happens when `session` is null or
+   *    when an earlier OnnxService init never ran. mockInference adds
+   *    `Math.random() * 0.05`, so two identical inputs produce
+   *    different scores. The determinism check fails.
+   *
+   * 2. Constant or near-constant model — happens when training was
+   *    misconfigured (feature-ordering bug, label-leak, wrong loss).
+   *    A clearly-legit vs clearly-fraud input pair should differ by
+   *    at least `MIN_DISCRIMINATION_GAP`. If both score the same the
+   *    model has no signal and we'd rather refuse traffic than serve
+   *    coin-flip predictions.
+   *
+   * Either failure marks the service NOT ready; `/readyz` will return
+   * DOWN until a working model replaces the bad one.
+   */
+  private async runCalibrationProbe(): Promise<void> {
+    if (this.sessions.length === 0 || !this.isModelLoaded) {
+      this.isCalibrationHealthy = false;
+      onnxLogger.error("calibrationProbe", "No ONNX sessions loaded — skipping probe (service will report NOT ready)", {});
+      return;
+    }
+
+    const MIN_DISCRIMINATION_GAP = 0.15;
+    const DETERMINISM_TOLERANCE = 1e-4;
+
+    try {
+      // Clearly-legit: trusted device, mature account, domestic, long session.
+      const legitVec = this.buildProbeVector({ fraud: false });
+      // Clearly-fraud: VPN, new account, foreign IP, 1-second session.
+      const fraudVec = this.buildProbeVector({ fraud: true });
+
+      const [legit1, legit2, fraud1, fraud2] = await Promise.all([
+        this.runRawInference(legitVec),
+        this.runRawInference(legitVec),
+        this.runRawInference(fraudVec),
+        this.runRawInference(fraudVec),
+      ]);
+
+      const legitJitter = Math.abs(legit1 - legit2);
+      const fraudJitter = Math.abs(fraud1 - fraud2);
+      const gap = fraud1 - legit1;
+
+      const isDeterministic = legitJitter < DETERMINISM_TOLERANCE && fraudJitter < DETERMINISM_TOLERANCE;
+      const discriminates = gap >= MIN_DISCRIMINATION_GAP;
+
+      if (!isDeterministic) {
+        onnxLogger.error(
+          "calibrationProbe",
+          "Model output is non-deterministic — identical inputs produced different scores. " +
+            "This is the signature of the mockInference fallback. /readyz will report DOWN.",
+          { legitJitter, fraudJitter, tolerance: DETERMINISM_TOLERANCE }
+        );
+        this.isCalibrationHealthy = false;
+        return;
+      }
+      if (!discriminates) {
+        onnxLogger.error(
+          "calibrationProbe",
+          "Model fails to discriminate between clearly-legit and clearly-fraud inputs. " +
+            `Score gap ${gap.toFixed(4)} is below the ${MIN_DISCRIMINATION_GAP} threshold. ` +
+            "Model is constant or near-constant — /readyz will report DOWN.",
+          { legitScore: legit1, fraudScore: fraud1, gap }
+        );
+        this.isCalibrationHealthy = false;
+        return;
+      }
+
+      this.isCalibrationHealthy = true;
+      onnxLogger.success("calibrationProbe", "Model passed calibration", {
+        legitScore: legit1,
+        fraudScore: fraud1,
+        gap: Number(gap.toFixed(4)),
+      });
+    } catch (err) {
+      onnxLogger.error("calibrationProbe", "Probe threw — marking model NOT ready", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      this.isCalibrationHealthy = false;
+    }
+  }
+
+  /**
+   * Warn when the model's score is dominated by integration-context
+   * fields (is_authenticated, device_is_trusted, channel, currency,
+   * session length) rather than behaviour. Two probe vectors describe
+   * the SAME plausible transaction; only the context fields differ —
+   * present on one, absent (an integrator that sends the six required
+   * fields and nothing else) on the other. A large gap means bare-
+   * payload integrators get blanket declines and full-payload fraud
+   * sails through — the exact degeneracy measured in
+   * efficacy-validation/report.md (finding F3).
+   *
+   * Warning only, never a readiness failure: the model still functions;
+   * the operator needs to know its scores track payload richness.
+   */
+  private async runContextSensitivityProbe(): Promise<void> {
+    if (this.sessions.length === 0 || !this.isModelLoaded) {
+      this.contextSensitivityGap = null;
+      return;
+    }
+
+    const WARN_GAP = 0.5;
+    try {
+      const bare = await this.runRawInference(this.buildContextProbeVector({ context: false }));
+      const full = await this.runRawInference(this.buildContextProbeVector({ context: true }));
+      const gap = Number(Math.abs(bare - full).toFixed(4));
+      this.contextSensitivityGap = gap;
+
+      if (gap > WARN_GAP) {
+        onnxLogger.warn(
+          "contextSensitivityProbe",
+          "Model score swings by " + gap.toFixed(4) + " on optional integration-context " +
+            "fields alone (same transaction, context fields present vs absent). " +
+            "Integrators sending only the required fields will see near-blanket " +
+            "flags while contextual fraud scores low. Retrain with context-field " +
+            "dropout or require the context fields from integrators.",
+          { bareScore: Number(bare.toFixed(4)), fullScore: Number(full.toFixed(4)), gap }
+        );
+        return;
+      }
+      onnxLogger.success("contextSensitivityProbe", "Context-field sensitivity within bounds", {
+        bareScore: Number(bare.toFixed(4)),
+        fullScore: Number(full.toFixed(4)),
+        gap,
+      });
+    } catch (err) {
+      this.contextSensitivityGap = null;
+      onnxLogger.warn("contextSensitivityProbe", "Probe threw — sensitivity unknown", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Probe vectors are addressed by catalogue NAME, never by literal
+   * index: an adopter overlay changes both the width and (on a base
+   * catalogue revision) the positions, and a probe silently reading
+   * the wrong slots would still report a confident healthy/unhealthy
+   * verdict.
+   */
+  private buildVector(values: Record<string, number>): Float32Array {
+    const catalog = loadCatalog();
+    const dim = Math.max(catalog.inputDimension, Number(process.env.MODEL_INPUT_DIMENSION) || 0);
+    const v = new Float32Array(dim);
+    for (const [name, value] of Object.entries(values)) {
+      const feature = catalog.byName.get(name);
+      if (!feature) {
+        throw new Error(`probe vector references unknown catalogue feature '${name}'`);
+      }
+      v[feature.index] = value;
+    }
+    return v;
+  }
+
+  /**
+   * One plausible mid-size transfer, twice. Only integration-context
+   * fields vary between the two variants.
+   */
+  private buildContextProbeVector(opts: { context: boolean }): Float32Array {
+    const base = {
+      amount: 5000,
+      transaction_type_code: 4,
+      is_inflow: 0,
+      account_age_days: 400,
+    };
+    if (!opts.context) return this.buildVector(base);
+    return this.buildVector({
+      ...base,
+      channel_code: 2,
+      currency_code: 1,
+      is_authenticated: 1,
+      device_is_trusted: 1,
+      session_to_txn_seconds: 120,
+    });
+  }
+
+  /**
+   * Values are chosen to be unambiguously legit or fraud along several
+   * axes any sensibly-trained model picks up — small amount +
+   * authenticated + trusted device + mature account for legit; vice
+   * versa for fraud. The vector never enters production; it's used
+   * only inside the calibration probe.
+   */
+  private buildProbeVector(opts: { fraud: boolean }): Float32Array {
+    return opts.fraud
+      ? this.buildVector({
+          amount: 850000,
+          transaction_type_code: 4,
+          is_inflow: 0,
+          account_age_days: 1,
+          is_authenticated: 0,
+          ip_is_vpn: 1,
+          device_is_trusted: 0,
+          session_to_txn_seconds: 1,
+        })
+      : this.buildVector({
+          amount: 42.5,
+          transaction_type_code: 2,
+          is_inflow: 0,
+          account_age_days: 730,
+          is_authenticated: 1,
+          ip_is_vpn: 0,
+          device_is_trusted: 1,
+          session_to_txn_seconds: 180,
+        });
+  }
+
+  /**
+   * Bypass the circuit breaker for the calibration probe. Going through
+   * `predict()` would route through opossum and either get classified
+   * as a failure or get the 1.0 fail-closed fallback — neither is what
+   * we want at probe time.
+   */
+  private async runRawInference(features: Float32Array): Promise<number> {
+    return this.runInference(features);
+  }
+
+  /**
+   * Load ONNX model from disk
+   */
+  private async loadModel(modelFilePath: string = this.modelPath): Promise<void> {
+    const startTime = Date.now();
+
+    try {
+      if (!fs.existsSync(modelFilePath)) {
+        onnxLogger.error(
+          "loadModel",
+          "Model file not found — train a model with " +
+            "`cd mla-service && source venv/bin/activate && python scripts/train_initial_model.py` " +
+            "then copy the resulting .onnx to models/fraud_model.onnx. " +
+            "RDA will not accept traffic until /readyz reports onnx-model: UP.",
+          { modelFilePath }
+        );
+        this.sessions = [];
+        this.isModelLoaded = false;
+        return;
+      }
+
+      // Per-session intra-op thread count is deliberately constrained so a
+      // pool of N sessions does not oversubscribe the host's CPUs. For the
+      // 122 KB XGBoost model we ship by default, tree traversal is
+      // inherently single-threaded, so 1 thread per session is optimal.
+      const sessionOptions: ort.InferenceSession.SessionOptions = {
+        executionProviders: ["cpu"],
+        graphOptimizationLevel: "all",
+        enableCpuMemArena: true,
+        enableMemPattern: true,
+        executionMode: "sequential",
+        intraOpNumThreads: appConfig.onnx.intraOpNumThreads,
+      };
+
+      const poolSize = appConfig.onnx.sessionPoolSize;
+      const newSessions = await Promise.all(
+        Array.from({ length: poolSize }, () =>
+          ort.InferenceSession.create(modelFilePath, sessionOptions),
+        ),
+      );
+
+      // Atomic swap so an in-flight predict either sees the old pool or
+      // the new pool, never a partially-initialised array. The previous
+      // sessions become unreachable and are GC'd once their in-flight
+      // calls drain.
+      this.sessions = newSessions;
+      this.nextSessionIndex = 0;
+      this.isModelLoaded = true;
+
+      const loadTime = Date.now() - startTime;
+      metricsService.recordModelLoadTime(loadTime);
+      metricsService.recordOnnxPoolSize(poolSize);
+
+      onnxLogger.success("loadModel", "ONNX model loaded successfully", {
+        loadTime,
+        modelFilePath,
+        poolSize,
+        intraOpNumThreads: appConfig.onnx.intraOpNumThreads,
+      });
+    } catch (err) {
+      onnxLogger.error("loadModel", "Failed to load ONNX model", {
+        modelFilePath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  }
+
+  /**
+   * Subscribe to ACTIVE-version changes published by
+   * `ModelRegistryService`. Awaited from `initialize()`, so the listener
+   * is wired before the server starts accepting requests. The dynamic
+   * import is still used to break the circular construction dependency
+   * with ModelRegistryService — but unlike a fire-and-forget `.then()`,
+   * the awaiter blocks until the subscription is in place.
+   */
+  private async subscribeToRegistry(): Promise<void> {
+    try {
+      const { default: ModelRegistryService } = await import("@shared/models/model-registry.service");
+      const registry = container.resolve(ModelRegistryService);
+      this.unsubscribeActiveChange = registry.onActiveChange((current, previous) => {
+        onnxLogger.info("activeChange", "ACTIVE model version changed", {
+          from: previous?.version ?? "(none)",
+          to: current?.version ?? "(none)",
+        });
+        if (!current) return;
+        this.applyActiveVersion(current.sourceUri, current.metadata).catch((err) =>
+          onnxLogger.error("applyActiveVersion", "Failed to load new ACTIVE model", {
+            version: current.version,
+            sourceUri: current.sourceUri,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        );
+      });
+
+      registry.onShadowChange((current, previous) => {
+        onnxLogger.info("shadowChange", "SHADOW model version changed", {
+          from: previous?.version ?? "(none)",
+          to: current?.version ?? "(none)",
+        });
+        this.applyShadowVersion(current).catch((err) =>
+          onnxLogger.error("applyShadowVersion", "Failed to load SHADOW model", {
+            version: current?.version ?? null,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        );
+      });
+
+      // The registry initializes before OnnxService, so a shadow that
+      // was already SHADOW at boot never fires the change listener.
+      await this.applyShadowVersion(registry.getShadow()).catch((err) =>
+        onnxLogger.error("applyShadowVersion", "Failed initial SHADOW load", {
+          error: err instanceof Error ? err.message : String(err),
+        })
+      );
+
+      // Same boot-order gap for the champion: an ACTIVE row that predates
+      // this subscription never fires the listener, so a cold start kept
+      // serving whatever MODEL_PATH held. Failure keeps the canonical
+      // model serving, exactly like a failed live flip.
+      const champion = registry.getChampion();
+      if (champion) {
+        await this.applyActiveVersion(champion.sourceUri, champion.metadata).catch((err) =>
+          onnxLogger.error("applyActiveVersion", "Failed initial ACTIVE load", {
+            version: champion.version,
+            sourceUri: champion.sourceUri,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        );
+      }
+    } catch (err) {
+      onnxLogger.warn("subscribeToRegistry", "Could not subscribe to registry", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Load the ONNX bytes for a registered model's `sourceUri` and
+   * atomically replace the current session. Supports `file://` URLs
+   * and bare relative / absolute paths. Anything else (s3://, http://)
+   * logs and skips — those schemes belong in a hosted-deployment
+   * fork and aren't part of the open-source self-hosted flow.
+   *
+   * Schema-version check: when the registered row's `metadata` carries
+   * a `feature_schema_version`, it must match the running catalogue.
+   * A mismatch means the model was trained against a different
+   * feature contract — loading would silently misalign input columns.
+   * We refuse, log loudly, and keep the previous session running.
+   */
+  private async applyActiveVersion(
+    sourceUri: string | null,
+    metadata?: Record<string, unknown> | null
+  ): Promise<void> {
+    if (!sourceUri) return;
+
+    if (metadata && typeof metadata.feature_schema_version === "string") {
+      const expected = loadCatalog().schemaVersion;
+      const reported = metadata.feature_schema_version as string;
+      if (reported !== expected) {
+        onnxLogger.error(
+          "applyActiveVersion",
+          "Refusing to load model — feature schema mismatch",
+          { reported, expected }
+        );
+        throw new Error(
+          `Feature schema mismatch: model was trained against '${reported}', running catalogue is '${expected}'. ` +
+            `Either retrain the model against the current catalogue or revert the adopter overlay.`
+        );
+      }
+    }
+
+    const resolved = this.resolveSourceUri(sourceUri);
+    if (!resolved) {
+      onnxLogger.warn("applyActiveVersion", "Non-local sourceUri scheme — skipping hot-reload", {
+        sourceUri,
+      });
+      return;
+    }
+
+    if (!fs.existsSync(resolved)) {
+      throw new Error(`Resolved sourceUri does not exist on disk: ${resolved}`);
+    }
+
+    // Best-effort copy into the canonical MODEL_PATH so anyone bypassing
+    // the registry (or restarting cold) still gets the correct artefact.
+    // The compose files mount models/ read-only into RDA, so EROFS is a
+    // normal outcome — serving continues from the version artefact.
+    if (resolved !== this.modelPath) {
+      try {
+        const tempPath = `${this.modelPath}.tmp`;
+        await fsp.copyFile(resolved, tempPath);
+        await fsp.rename(tempPath, this.modelPath);
+      } catch (err) {
+        onnxLogger.warn(
+          "applyActiveVersion",
+          "Canonical copy failed — serving the version artefact directly",
+          { resolved, error: err instanceof Error ? err.message : String(err) }
+        );
+      }
+    }
+
+    // Load the model first: applying the incoming version's calibration
+    // to the outgoing model's scores would shift decisions for any
+    // request in flight during the swap.
+    await this.loadModel(resolved);
+    // Calibration travels with the version directory, not the canonical
+    // MODEL_PATH copy — resolve it from the source artefact.
+    this.loadCalibrationFor(resolved);
+    // Re-probe after every hot-swap. A model that loads at the ONNX-runtime
+    // level can still be wrong-dim, constant, or inverted at the prediction
+    // level — without this the registry could swap in a broken artefact and
+    // /readyz would stay UP while every predict returns the fail-closed 1.0.
+    await this.runCalibrationProbe();
+    await this.runContextSensitivityProbe();
+    onnxLogger.success("applyActiveVersion", "Hot-reloaded ACTIVE model", {
+      sourceUri,
+      modelPath: this.modelPath,
+      calibrationHealthy: this.isCalibrationHealthy,
+      contextSensitivityGap: this.contextSensitivityGap,
+    });
+  }
+
+  private resolveSourceUri(sourceUri: string): string | null {
+    if (sourceUri.startsWith("file://")) return sourceUri.slice("file://".length);
+    if (sourceUri.startsWith("/")) return sourceUri;
+    if (/^[a-z]+:\/\//i.test(sourceUri)) return null;
+    return path.resolve(process.cwd(), sourceUri);
+  }
+
+  /**
+   * Load (or unload) the SHADOW model's sessions. Loaded directly from
+   * the version's artefact path — the canonical MODEL_PATH stays owned
+   * by the champion. A shadow that fails to load leaves shadow scoring
+   * off (`predictShadow` returns null); it never affects the decision
+   * path or /readyz.
+   */
+  private async applyShadowVersion(row: ModelVersion | null): Promise<void> {
+    if (!row || !row.sourceUri) {
+      if (this.shadowSessions.length > 0) {
+        onnxLogger.info("applyShadowVersion", "Shadow cleared — unloading sessions", {});
+      }
+      this.shadowSessions = [];
+      this.shadowSourceKey = null;
+      return;
+    }
+
+    const key = `${row.version}|${row.sourceUri}`;
+    if (key === this.shadowSourceKey) return;
+
+    const metadata = row.metadata as Record<string, unknown> | null;
+    if (metadata && typeof metadata.feature_schema_version === "string") {
+      const { loadCatalog } = await import("@shared/features/feature-catalog");
+      const expected = loadCatalog().schemaVersion;
+      if (metadata.feature_schema_version !== expected) {
+        onnxLogger.error("applyShadowVersion", "Refusing shadow — feature schema mismatch", {
+          version: row.version,
+          reported: metadata.feature_schema_version,
+          expected,
+        });
+        this.shadowSessions = [];
+        this.shadowSourceKey = null;
+        return;
+      }
+    }
+
+    const resolved = this.resolveSourceUri(row.sourceUri);
+    if (!resolved || !fs.existsSync(resolved)) {
+      onnxLogger.error("applyShadowVersion", "Shadow sourceUri not loadable", {
+        version: row.version,
+        sourceUri: row.sourceUri,
+      });
+      this.shadowSessions = [];
+      this.shadowSourceKey = null;
+      return;
+    }
+
+    const sessionOptions: ort.InferenceSession.SessionOptions = {
+      executionProviders: ["cpu"],
+      graphOptimizationLevel: "all",
+      enableCpuMemArena: true,
+      enableMemPattern: true,
+      executionMode: "sequential",
+      intraOpNumThreads: appConfig.onnx.intraOpNumThreads,
+    };
+    const poolSize = Math.min(2, appConfig.onnx.sessionPoolSize);
+    const newSessions = await Promise.all(
+      Array.from({ length: poolSize }, () => ort.InferenceSession.create(resolved, sessionOptions)),
+    );
+
+    this.shadowSessions = newSessions;
+    this.nextShadowIndex = 0;
+    this.shadowSourceKey = key;
+    onnxLogger.success("applyShadowVersion", "SHADOW model loaded", {
+      version: row.version,
+      sourceUri: row.sourceUri,
+      poolSize,
+    });
+  }
+
+  /**
+   * Score the SHADOW model. Observational only: returns null when no
+   * shadow is loaded or scoring fails — never throws, never fails
+   * closed, never touches the decision.
+   */
+  async predictShadow(features: Float32Array): Promise<number | null> {
+    if (this.shadowSessions.length === 0) return null;
+
+    const session = this.shadowSessions[this.nextShadowIndex % this.shadowSessions.length]!;
+    this.nextShadowIndex = (this.nextShadowIndex + 1) % this.shadowSessions.length;
+
+    const startTime = Date.now();
+    try {
+      const score = await this.executeSession(session, features);
+      metricsService.recordPredictStage("shadow_inference", Date.now() - startTime);
+      return score;
+    } catch (err) {
+      onnxLogger.warn("predictShadow", "Shadow inference failed — recording null", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  isShadowLoaded(): boolean {
+    return this.shadowSessions.length > 0;
+  }
+
+  /**
+   * Tear down listeners. Exposed so server-shutdown hooks can call it
+   * cleanly; safe to call multiple times.
+   */
+  close(): void {
+    if (this.unsubscribeActiveChange) {
+      this.unsubscribeActiveChange();
+      this.unsubscribeActiveChange = null;
+    }
+  }
+
+  /**
+   * Run inference on feature vector using circuit breaker.
+   * Vector width is determined by the active feature catalogue
+   * (64 base + adopter overlay). Pad-to-fit handles models trained
+   * against a wider dimension via `MODEL_INPUT_DIMENSION`.
+   * @returns Fraud probability (0.0 - 1.0)
+   */
+  async predict(features: Float32Array): Promise<InferenceOutcome> {
+    return this.inferenceCircuitBreaker.fire(features);
+  }
+
+  /**
+   * Internal inference method
+   */
+  private async runInference(features: Float32Array): Promise<number> {
+    const startTime = Date.now();
+    const traceId = TraceContext.getTraceId();
+
+    try {
+      if (this.sessions.length === 0 || !this.isModelLoaded) {
+        throw new Error("ONNX sessions not loaded — predict cannot proceed");
+      }
+
+      // The pool selector spreads concurrent calls across sessions so
+      // onnxruntime-node's per-session execution lock does not
+      // serialize the request hot path.
+      const probability = await this.executeSession(this.nextSession(), features);
+
+      const inferenceTime = Date.now() - startTime;
+      metricsService.recordModelInferenceLatency(inferenceTime);
+
+      onnxLogger.debug("runInference", "Model inference completed", {
+        traceId,
+        inferenceTime,
+        probability,
+      });
+
+      return probability;
+    } catch (err) {
+      onnxLogger.error("runInference", "Model inference failed", {
+        traceId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  }
+
+  private async executeSession(
+    session: ort.InferenceSession,
+    features: Float32Array
+  ): Promise<number> {
+    // Pad-to-fit if the loaded model expects more dimensions than
+    // the catalogue currently produces. Only used for the brief
+    // transition between Phase 2 (RDA serves 64-dim) and Phase 3
+    // (MLA retrains at 64-dim). When the model and catalogue match,
+    // `features` is used verbatim.
+    const expectedDim = Number(process.env.MODEL_INPUT_DIMENSION) || 0;
+    let inputArray = features;
+    if (expectedDim > features.length) {
+      inputArray = new Float32Array(expectedDim);
+      inputArray.set(features);
+    }
+
+    const inputTensor = new ort.Tensor("float32", inputArray, [1, inputArray.length]);
+    const results = await session.run({ input: inputTensor });
+
+    // XGBoost-via-onnxmltools emits `probabilities` shape [N, 2] as
+    // [P(legit), P(fraud)] — we need index 1. Legacy single-output
+    // stubs still expose a scalar at index 0.
+    const output: ort.Tensor =
+      (results.probabilities as ort.Tensor | undefined) ??
+      (results.output as ort.Tensor | undefined) ??
+      (Object.values(results)[0] as ort.Tensor);
+    if (!output) throw new Error("ONNX inference returned no output tensor");
+    const data = output.data as Float32Array;
+    const dims = output.dims ?? [];
+    const isBinaryProbs = dims.length === 2 && dims[1] === 2 && data.length >= 2;
+    return isBinaryProbs ? data[1]! : data[0]!;
+  }
+
+  /**
+   * Removed. The previous heuristic fallback produced plausible-looking
+   * but meaningless scores when no model was loaded, silently masking
+   * the four bugs that motivated the open-source-readiness work. The
+   * predict path now hard-fails when the session is null; the circuit
+   * breaker returns the existing 1.0 (DECLINE) and /readyz reports
+   * onnx-model: DOWN via the calibration probe.
+   */
+
+  /**
+   * Check if a real ONNX session is loaded. Previously this returned
+   * `true` even in mock-inference mode (the expression evaluated to
+   * `true` whenever the model failed to load), so `/readyz` reported
+   * green while predictions were random-noise — which is the worst
+   * possible failure mode for a fraud system. Mock mode now reports
+   * NOT ready; the surrounding boot flow still serves degraded
+   * default-feature predictions, but operators get an unmissable
+   * "fix me" signal from the health probe.
+   */
+  isReady(): boolean {
+    return this.sessions.length > 0 && this.isCalibrationHealthy;
+  }
+
+  /**
+   * Get model info
+   */
+  getModelInfo(): {
+    path: string;
+    loaded: boolean;
+    inputDimensions: number;
+    contextSensitivityGap: number | null;
+  } {
+    const expectedDim = Number(process.env.MODEL_INPUT_DIMENSION) || 0;
+    return {
+      path: this.modelPath,
+      loaded: this.isModelLoaded,
+      inputDimensions: expectedDim,
+      contextSensitivityGap: this.contextSensitivityGap,
+    };
+  }
+}
+
+export default OnnxService;
