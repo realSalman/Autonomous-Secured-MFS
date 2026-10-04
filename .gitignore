@@ -24,3 +24,7 @@ redisdata/
 
 # Editor
 .kilo/
+
+# Vercel
+.vercel/
+
