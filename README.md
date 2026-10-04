@@ -1,4 +1,4 @@
-# SecureAssist MFS
+# Autonomous SecureAssist MFS
 
 AI-powered customer support platform for mobile financial services (MFS) with integrated fraud detection.
 
@@ -8,7 +8,7 @@ AI-powered customer support platform for mobile financial services (MFS) with in
 
 ```bash
 git clone <repo-url>
-cd SecureAssist MFS
+cd Autonomous SecureAssist MFS
 cp .env.example .env        # add your LLM API key
 docker compose up -d         # start everything
 ```

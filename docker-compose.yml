@@ -1,4 +1,4 @@
-# SecureAssist MFS — Full Stack
+# autonomous-secureassist-mfs — Full Stack
 #
 # Usage:
 #   cp .env.example .env          # add your LLM API key
@@ -11,18 +11,18 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    container_name: SecureAssist MFS-postgres
+    container_name: autonomous-secureassist-mfs-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: SecureAssist MFS
+      POSTGRES_USER: autonomous-secureassist-mfs
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      POSTGRES_DB: SecureAssist MFS
+      POSTGRES_DB: autonomous-secureassist-mfs
     ports:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U SecureAssist MFS"]
+      test: ["CMD-SHELL", "pg_isready -U autonomous-secureassist-mfs"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -31,12 +31,12 @@ services:
 
   seed:
     build: .
-    container_name: SecureAssist MFS-seed
+    container_name: autonomous-secureassist-mfs-seed
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://SecureAssist MFS:${POSTGRES_PASSWORD:-password}@postgres:5432/SecureAssist MFS
+      DATABASE_URL: postgresql://autonomous-secureassist-mfs:${POSTGRES_PASSWORD:-password}@postgres:5432/autonomous-secureassist-mfs
     command: ["npx", "tsx", "server/src/db/seed.ts"]
     restart: "no"
 
@@ -44,7 +44,7 @@ services:
 
   app:
     build: .
-    container_name: SecureAssist MFS-app
+    container_name: autonomous-secureassist-mfs-app
     restart: unless-stopped
     depends_on:
       postgres:
@@ -55,11 +55,11 @@ services:
       - "3001:3001"
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://SecureAssist MFS:${POSTGRES_PASSWORD:-password}@postgres:5432/SecureAssist MFS
+      DATABASE_URL: postgresql://autonomous-secureassist-mfs:${POSTGRES_PASSWORD:-password}@postgres:5432/autonomous-secureassist-mfs
       PORT: 3001
       NODE_ENV: production
       OJURI_ENABLED: "true"
-      OJURI_API_URL: http://SecureAssist MFS-fraud-detector-rda:3000
+      OJURI_API_URL: http://autonomous-secureassist-mfs-fraud-detector-rda:3000
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3001/api/health || exit 1"]
       interval: 10s
@@ -80,7 +80,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: SecureAssist MFS-redis
+    container_name: autonomous-secureassist-mfs-redis
     restart: unless-stopped
     ports:
       - "6380:6379"
@@ -94,7 +94,7 @@ services:
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
-    container_name: SecureAssist MFS-zookeeper
+    container_name: autonomous-secureassist-mfs-zookeeper
     restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
@@ -102,7 +102,7 @@ services:
 
   kafka:
     image: confluentinc/cp-kafka:7.6.0
-    container_name: SecureAssist MFS-kafka
+    container_name: autonomous-secureassist-mfs-kafka
     restart: unless-stopped
     depends_on:
       - zookeeper
@@ -124,18 +124,18 @@ services:
 
   fraud-migrate:
     build: ./server/fraud_detector
-    container_name: SecureAssist MFS-fraud-detector-migrate
+    container_name: autonomous-secureassist-mfs-fraud-detector-migrate
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://SecureAssist MFS:${POSTGRES_PASSWORD:-password}@postgres:5432/fraud_db
+      DATABASE_URL: postgresql://autonomous-secureassist-mfs:${POSTGRES_PASSWORD:-password}@postgres:5432/fraud_db
       NODE_ENV: production
       DB_CLIENT: pg
       DB_HOST: postgres
       DB_PORT: 5432
       DB_DATABASE: fraud_db
-      DB_USERNAME: SecureAssist MFS
+      DB_USERNAME: autonomous-secureassist-mfs
       DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
       KNEX_MIGRATIONS_DIR: /app/dist/database/migrations
       KNEX_SEEDS_DIR: /app/dist/database/seeds
@@ -147,7 +147,7 @@ services:
 
   rda:
     build: ./server/fraud_detector
-    container_name: SecureAssist MFS-fraud-detector-rda
+    container_name: autonomous-secureassist-mfs-fraud-detector-rda
     restart: unless-stopped
     depends_on:
       postgres:
@@ -169,9 +169,9 @@ services:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_DATABASE: fraud_db
-      DB_USERNAME: SecureAssist MFS
+      DB_USERNAME: autonomous-secureassist-mfs
       DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      DB_URL: postgresql://SecureAssist MFS:${POSTGRES_PASSWORD:-password}@postgres:5432/fraud_db
+      DB_URL: postgresql://autonomous-secureassist-mfs:${POSTGRES_PASSWORD:-password}@postgres:5432/fraud_db
       REDIS_HOST: redis
       REDIS_PORT: 6379
       KAFKA_BROKERS: kafka:29092
@@ -180,7 +180,7 @@ services:
 
   paa:
     build: ./server/fraud_detector/paa-service
-    container_name: SecureAssist MFS-fraud-detector-paa
+    container_name: autonomous-secureassist-mfs-fraud-detector-paa
     restart: unless-stopped
     depends_on:
       kafka:
@@ -196,9 +196,9 @@ services:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_DATABASE: fraud_db
-      DB_USERNAME: SecureAssist MFS
+      DB_USERNAME: autonomous-secureassist-mfs
       DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      DB_URL: postgresql://SecureAssist MFS:${POSTGRES_PASSWORD:-password}@postgres:5432/fraud_db
+      DB_URL: postgresql://autonomous-secureassist-mfs:${POSTGRES_PASSWORD:-password}@postgres:5432/fraud_db
       REDIS_HOST: redis
       REDIS_PORT: 6379
       KAFKA_BROKERS: kafka:29092
