@@ -1,36 +1,22 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "services": {
-    "api": {
-      "root": ".",
-      "installCommand": "npm install",
-      "buildCommand": "echo 'API build skipped'",
-      "functions": {
-        "api/**/*.ts": {
-          "maxDuration": 30,
-          "includeFiles": "server/src/**"
-        }
-      }
+  "version": 2,
+  "buildCommand": "npm run vercel-build",
+  "outputDirectory": "client/dist",
+  "framework": null,
+  "installCommand": "npm install",
+  "functions": {
+    "api/index.ts": {
+      "maxDuration": 30,
+      "includeFiles": "server/src/**"
     },
-    "client": {
-      "root": "client",
-      "framework": "vite"
+    "api/seed.ts": {
+      "maxDuration": 30,
+      "includeFiles": "server/src/**"
     }
   },
   "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": {
-        "service": "api",
-        "path": "/api/$1"
-      }
-    },
-    {
-      "source": "/(.*)",
-      "destination": {
-        "service": "client",
-        "path": "/$1"
-      }
-    }
+    { "source": "/api/seed", "destination": "/api/seed.ts" },
+    { "source": "/api/(.*)", "destination": "/api/index.ts" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
