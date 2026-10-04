@@ -30,7 +30,9 @@ services:
   # ── Seed sample data (runs once, then exits) ──
 
   seed:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile.local
     container_name: autonomous-secureassist-mfs-seed
     depends_on:
       postgres:
@@ -43,7 +45,9 @@ services:
   # ── Application (API + Client on port 3001) ──
 
   app:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile.local
     container_name: autonomous-secureassist-mfs-app
     restart: unless-stopped
     depends_on:
