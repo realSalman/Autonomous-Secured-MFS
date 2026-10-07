@@ -128,190 +128,94 @@ export function ConversationPanel({
   // Canned response quick chips
   const quickChips = [
     {
-      label: 'Core Banking Verification',
-      text: 'I have checked our core banking ledger and verified your transaction status with the switch.',
+      label: '24–72h Auto Reversal',
+      text: 'For failed transactions where balance was deducted, funds auto-reverse within 24–72 hours.',
     },
     {
-      label: '24–72h Reversal SLA',
-      text: 'For failed transactions where your balance was deducted, the funds will auto-reverse to your wallet within 24–72 hours.',
+      label: 'Ledger Verified',
+      text: 'Our team verified the core banking ledger; the transaction has been flagged for prioritized reconciliation.',
     },
     {
-      label: 'Request Recipient Confirmation',
-      text: 'Please confirm the recipient wallet number and transaction timestamp so we can verify the dispute.',
+      label: 'Request Details',
+      text: 'Could you please confirm the recipient number and transaction timestamp?',
     },
     {
       label: 'Case Resolved',
-      text: 'Your balance reconciliation has been confirmed. Thank you for choosing PayFlow.',
+      text: 'Your balance reconciliation is complete. Thank you for using PayFlow support.',
     },
   ];
 
-  // ── EMPTY STATE: OPERATIONS CENTER DASHBOARD ──
+  // ── EMPTY STATE: CLEAN INBOX OVERVIEW ──
   if (!ticket) {
-    const urgentTickets = allTickets.filter((t) => {
-      if (t.status === 'resolved') return false;
-      const prio = deriveTicketPriority(t);
-      return prio.level === 'urgent' || prio.level === 'high';
-    });
+    const pendingCases = allTickets.filter((t) => t.status !== 'resolved');
 
     return (
-      <div className="conversation-panel ops-empty-dashboard">
-        {/* Operations Welcome Banner */}
-        <div className="ops-empty-hero">
-          <div className="ops-empty-hero-header">
-            <div>
-              <span className="ops-empty-tag">MFS Operations Center</span>
-              <h1 className="ops-empty-title">Customer Support & Case Investigation</h1>
-              <p className="ops-empty-subtitle">
-                Select a customer case from the queue to investigate transaction ledger evidence,
-                review AI-assisted triage, and execute human-authorized decisions.
-              </p>
-            </div>
-            <div className="ops-empty-system-status">
-              <span className="system-status-indicator" />
-              <span className="system-status-label">AI Copilot Engine Active</span>
-            </div>
-          </div>
-        </div>
+      <main className="conversation-panel empty-inbox-view">
+        <div className="empty-inbox-center">
+          <div className="empty-inbox-icon">💬</div>
+          <h2>Select a Customer Case</h2>
+          <p>Choose an item from the queue on the left to start review, inspect ledger records, and respond.</p>
 
-        {/* Responsible AI Flow Diagram */}
-        <div className="ops-workflow-section">
-          <div className="ops-workflow-header">
-            <span className="ops-workflow-title">Human-in-the-Loop Operational Flow</span>
-            <span className="ops-workflow-tag">Standard Operating Procedure</span>
-          </div>
-
-          <div className="ops-workflow-steps">
-            <div className="workflow-step">
-              <div className="step-num">1</div>
-              <div className="step-label">Customer Report</div>
-              <div className="step-desc">Issue submitted via PayFlow wallet</div>
-            </div>
-            <div className="workflow-arrow">→</div>
-            <div className="workflow-step">
-              <div className="step-num">2</div>
-              <div className="step-label">AI Triage</div>
-              <div className="step-desc">Intent classification & ledger scan</div>
-            </div>
-            <div className="workflow-arrow">→</div>
-            <div className="workflow-step">
-              <div className="step-num">3</div>
-              <div className="step-label">AI Recommendation</div>
-              <div className="step-desc">Signals identified & advice drafted</div>
-            </div>
-            <div className="workflow-arrow">→</div>
-            <div className="workflow-step highlight">
-              <div className="step-num">4</div>
-              <div className="step-label">Human Review</div>
-              <div className="step-desc">Agent evaluates evidence & intent</div>
-            </div>
-            <div className="workflow-arrow">→</div>
-            <div className="workflow-step highlight">
-              <div className="step-num">5</div>
-              <div className="step-label">Human Decision</div>
-              <div className="step-desc">Authorization, response & resolution</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Priority Triage Queue */}
-        <div className="ops-urgent-section">
-          <div className="ops-urgent-header">
-            <h3>Cases Requiring Agent Attention ({urgentTickets.length})</h3>
-            <span className="urgent-badge-pill">High Financial Priority</span>
-          </div>
-
-          {urgentTickets.length === 0 ? (
-            <div className="ops-empty-clean-card">
-              <span className="clean-icon">✓</span>
-              <div>
-                <strong>Queue in good standing</strong>
-                <p>No high-priority or escalated tickets currently pending initial agent triage.</p>
-              </div>
-            </div>
-          ) : (
-            <div className="ops-urgent-grid">
-              {urgentTickets.map((t) => {
-                const p = deriveTicketPriority(t);
-                const ev = deriveAIEvaluation(t);
-                return (
-                  <div
-                    key={t._id}
-                    className="ops-urgent-card"
-                    onClick={() => onSelectTicket && onSelectTicket(t)}
-                  >
-                    <div className="urgent-card-top">
-                      <span className="urgent-card-token">{t.token}</span>
-                      <span className={`priority-badge ${p.badgeClass}`}>{p.label}</span>
-                      <span className="urgent-card-time">{formatTimeAgo(t.updatedAt)}</span>
-                    </div>
-                    <div className="urgent-card-cust">
-                      <strong>{t.user?.name || t.phone}</strong> · {t.phone}
-                    </div>
-                    <div className="urgent-card-preview">
-                      "{t.messages[0]?.content.slice(0, 85)}..."
-                    </div>
-                    <div className="urgent-card-bottom">
-                      <span className={`ticket-ai-chip ${ev.badgeClass}`}>
-                        AI: {ev.recommendation}
-                      </span>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (onSelectTicket) onSelectTicket(t);
-                        }}
-                      >
-                        Inspect Case →
-                      </button>
-                    </div>
+          {pendingCases.length > 0 && (
+            <div className="empty-inbox-list">
+              <div className="empty-inbox-header">Active Cases Waiting ({pendingCases.length})</div>
+              {pendingCases.slice(0, 3).map((t) => (
+                <div
+                  key={t._id}
+                  className="empty-case-card"
+                  onClick={() => onSelectTicket && onSelectTicket(t)}
+                >
+                  <div className="empty-case-top">
+                    <span className="empty-case-token">{t.token}</span>
+                    <span className="empty-case-user">{t.user?.name || t.phone}</span>
+                    <span className="empty-case-time">{formatTimeAgo(t.updatedAt)}</span>
                   </div>
-                );
-              })}
+                  <div className="empty-case-snippet">
+                    "{t.messages[0]?.content.slice(0, 90)}..."
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
-      </div>
+      </main>
     );
   }
 
-  // ── ACTIVE CASE INVESTIGATION WORKSPACE ──
+  // ── ACTIVE CONVERSATION WORKSPACE ──
   return (
-    <div className="conversation-panel">
-      {/* 1. Header: Customer Identity & Case Controls */}
-      <div className="conversation-header">
-        <div className="conversation-header-info">
-          <div className="conversation-avatar">
+    <main className="conversation-panel">
+      {/* 1. Header: Customer Identity & Actions */}
+      <header className="conv-header">
+        <div className="conv-header-left">
+          <div className="conv-avatar">
             {(ticket.user?.name || ticket.phone).slice(0, 2).toUpperCase()}
           </div>
-          <div>
-            <div className="conversation-customer-name">
-              {ticket.user?.name || 'Customer Account'}
-              {priority && (
-                <span className={`priority-badge ${priority.badgeClass}`} style={{ marginLeft: 8 }}>
-                  {priority.label}
-                </span>
+          <div className="conv-user-info">
+            <div className="conv-name-row">
+              <span className="conv-customer-name">
+                {ticket.user?.name || 'Customer Account'}
+              </span>
+              <span className="conv-token-pill">{ticket.token}</span>
+              {priority?.level === 'urgent' && (
+                <span className="conv-priority-urgent">Urgent</span>
               )}
             </div>
-            <div className="conversation-customer-detail">
+            <div className="conv-meta-row">
               <span>{ticket.phone}</span>
-              <span className="dot-sep">·</span>
-              <span className="detail-token">{ticket.token}</span>
-              <span className="dot-sep">·</span>
-              <span className="detail-balance">
-                Available: <strong>৳{formatBDT(ticket.user?.balance)}</strong>
+              <span className="sep">•</span>
+              <span>
+                Wallet Balance: <strong>৳{formatBDT(ticket.user?.balance)}</strong>
               </span>
             </div>
           </div>
         </div>
 
-        {/* Status controls */}
-        <div className="conversation-header-actions">
-          <div className="status-control-group">
-            <span className="status-label">Case Status:</span>
+        <div className="conv-header-right">
+          <div className="conv-status-wrapper">
             <select
               id="ticket-status-select"
-              className="status-select"
+              className="conv-status-select"
               value={ticket.status}
               onChange={(e) => handleStatusChange(e.target.value)}
             >
@@ -324,94 +228,55 @@ export function ConversationPanel({
           {ticket.status !== 'resolved' ? (
             <button
               type="button"
-              className="btn btn-secondary btn-sm resolve-btn"
+              className="btn btn-primary btn-sm conv-resolve-btn"
               onClick={() => handleStatusChange('resolved')}
-              title="Mark ticket as resolved"
             >
-              ✓ Resolve Case
+              Resolve Case
             </button>
           ) : (
             <button
               type="button"
               className="btn btn-secondary btn-sm"
               onClick={() => handleStatusChange('in_progress')}
-              title="Reopen ticket"
             >
               Reopen
             </button>
           )}
         </div>
-      </div>
+      </header>
 
-      {/* 2. Top Investigation Context Bar: Relevant Transaction & AI Triage Synopsis */}
-      <div className="case-context-banner">
-        {/* Transaction Context Card */}
-        <div className="context-tx-box">
-          <div className="context-box-title">
-            <span className="context-icon">💳</span>
-            <span>Transaction Ledger Evidence</span>
-            {txLoading && <span className="tx-loading-tag">Loading...</span>}
+      {/* 2. Sleek Context Bar: Combines Transaction & AI Triage cleanly */}
+      <div className="conv-context-strip">
+        {matchedTx ? (
+          <div className="context-strip-item tx-item">
+            <span className="context-strip-label">Transaction:</span>
+            <span className="context-tx-badge">{matchedTx.tx_id}</span>
+            <span className="context-tx-amount">৳{formatBDT(matchedTx.amount)}</span>
+            <span className={`context-status-pill status-${matchedTx.status}`}>
+              {matchedTx.status.toUpperCase()}
+            </span>
+            <span className="context-tx-party">
+              {matchedTx.sender === ticket.phone ? `to ${matchedTx.receiver}` : `from ${matchedTx.sender}`}
+            </span>
           </div>
+        ) : (
+          <div className="context-strip-item">
+            <span className="context-strip-label">Ledger:</span>
+            <span>No specific transaction linked</span>
+          </div>
+        )}
 
-          {matchedTx ? (
-            <div className="context-tx-details">
-              <div className="context-tx-main">
-                <span className="tx-id-badge">{matchedTx.tx_id}</span>
-                <span className="tx-amount">৳{formatBDT(matchedTx.amount)}</span>
-                <span className={`tx-status-pill tx-status-${matchedTx.status}`}>
-                  {matchedTx.status.toUpperCase()}
-                </span>
-              </div>
-              <div className="context-tx-meta">
-                <span>
-                  {matchedTx.sender === ticket.phone ? 'Recipient: ' : 'Sender: '}
-                  <strong>{matchedTx.sender === ticket.phone ? matchedTx.receiver : matchedTx.sender}</strong>
-                </span>
-                <span className="dot-sep">·</span>
-                <span>{new Date(matchedTx.time).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</span>
-                <span className="dot-sep">·</span>
-                <span className="tx-safe-tag">
-                  {matchedTx.fraud_decision ? `Fraud: ${matchedTx.fraud_decision}` : 'No Fraud Flags'}
-                </span>
-              </div>
-            </div>
-          ) : (
-            <div className="context-tx-none">
-              No matching transaction record found for referenced numbers. Customer balance: ৳{formatBDT(ticket.user?.balance)}.
-            </div>
-          )}
-        </div>
-
-        {/* AI Synopsis Banner */}
         {aiEval && (
-          <div className="context-ai-synopsis">
-            <div className="context-box-title">
-              <span className="ai-pulse-dot" />
-              <span>AI Triage Synopsis</span>
-              <span className={`ai-synopsis-tag ${aiEval.badgeClass}`}>{aiEval.recommendation}</span>
-            </div>
-            <div className="ai-synopsis-content">
-              {aiEval.reasoning[0] || 'AI reviewed transaction and customer messages.'}
-            </div>
+          <div className="context-strip-item ai-item">
+            <span className="context-strip-label">AI Triage:</span>
+            <span className="context-ai-rec">{aiEval.recommendation}</span>
+            <span className="context-ai-reason">{aiEval.reasoning[0] || ''}</span>
           </div>
         )}
       </div>
 
-      {/* 3. Messages Thread */}
-      <div className="conversation-messages">
-        {/* Customer Issue Card (First message pin) */}
-        {ticket.messages[0] && (
-          <div className="customer-original-issue-pin">
-            <div className="issue-pin-header">
-              <span className="pin-icon">📌</span>
-              <span className="pin-title">Reported Customer Complaint</span>
-              <span className="pin-time">{formatTimeAgo(ticket.messages[0].timestamp)}</span>
-            </div>
-            <div className="issue-pin-text">"{ticket.messages[0].content}"</div>
-          </div>
-        )}
-
-        {/* Message bubbles */}
+      {/* 3. Messages Stream */}
+      <div className="conv-messages-container">
         {ticket.messages.map((msg, i) => {
           const isCustomer = msg.role === 'customer';
           const isAI = msg.role === 'ai';
@@ -420,73 +285,66 @@ export function ConversationPanel({
           return (
             <div
               key={i}
-              className={`admin-msg admin-msg-${msg.role}`}
+              className={`conv-msg-row ${
+                isCustomer ? 'row-customer' : isAI ? 'row-ai' : 'row-agent'
+              }`}
             >
-              <div className="admin-msg-sender-row">
-                <span className={`sender-role-badge role-${msg.role}`}>
-                  {isCustomer ? 'Customer' : isAI ? 'AI Assistant (Automated)' : 'Support Agent (Human)'}
-                </span>
-                <span className="sender-name">
-                  {isCustomer ? ticket.user?.name || ticket.phone : isAI ? 'SupportIQ Bot' : 'Agent'}
-                </span>
-              </div>
+              <div className="conv-bubble-wrapper">
+                <div className="conv-msg-header">
+                  <span className="conv-sender-badge">
+                    {isCustomer ? 'Customer' : isAI ? 'AI Copilot' : 'Human Agent'}
+                  </span>
+                  <span className="conv-msg-time">{formatMsgTime(msg.timestamp)}</span>
+                </div>
 
-              <div className="admin-msg-bubble">
-                {isAI && <div className="ai-badge-watermark">Automated Advisory</div>}
-                <div className="msg-text-body">{msg.content}</div>
+                <div className="conv-bubble-body">
+                  {msg.content}
+                </div>
               </div>
-
-              <div className="admin-msg-time">{formatMsgTime(msg.timestamp)}</div>
             </div>
           );
         })}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* 4. Quick Response Chips */}
-      <div className="conversation-quick-chips">
-        <span className="quick-chips-label">Quick Snippets:</span>
-        <div className="quick-chips-list">
+      {/* 4. Quick Response Snippets */}
+      <div className="conv-quick-bar">
+        <span className="quick-bar-title">Quick Reply:</span>
+        <div className="quick-bar-chips">
           {quickChips.map((chip, idx) => (
             <button
               key={idx}
               type="button"
-              className="quick-chip-btn"
+              className="quick-chip"
               onClick={() => insertSnippet(chip.text)}
               title={chip.text}
             >
-              + {chip.label}
+              {chip.label}
             </button>
           ))}
         </div>
       </div>
 
-      {/* 5. Agent Response Composer */}
-      <form className="conversation-input-bar" onSubmit={handleSend}>
-        <div className="composer-agent-tag">
-          <span className="agent-indicator" />
-          <span>Human Decision</span>
-        </div>
-
+      {/* 5. Reply Composer */}
+      <form className="conv-composer" onSubmit={handleSend}>
         <input
           id="admin-message-input"
-          className="input conversation-input"
+          className="conv-composer-input"
           type="text"
-          placeholder="Type human response to customer (e.g. status explanation, reversal update)..."
+          placeholder="Reply to customer (e.g. explain status or reversal)..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={loading}
         />
-
         <button
           id="admin-message-send"
-          className="btn btn-primary"
+          className="btn btn-primary conv-send-btn"
           type="submit"
           disabled={loading || !input.trim()}
         >
-          {loading ? 'Sending...' : 'Send as Agent'}
+          {loading ? 'Sending...' : 'Send Reply'}
         </button>
       </form>
-    </div>
+    </main>
   );
 }

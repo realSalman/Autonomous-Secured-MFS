@@ -88,14 +88,14 @@ export function AICopilot({ ticket, onUseReply }: AICopilotProps) {
     }
   };
 
-  const handleOverride = () => {
-    const overrideTemplate = `Dear ${ticket?.user?.name || 'Customer'},\n\nI have personally reviewed your account details. Our operations team has escalated this case for manual verification. We will update you shortly.`;
-    setEditedText(overrideTemplate);
-  };
-
-  const handleRequestInfo = () => {
-    const infoTemplate = `Dear ${ticket?.user?.name || 'Customer'},\n\nCould you please confirm the exact time of the transaction, the recipient wallet number, and any SMS confirmation or error message received?`;
-    setEditedText(infoTemplate);
+  const handleApplyTemplate = (type: 'override' | 'info') => {
+    if (type === 'override') {
+      const overrideTemplate = `Dear ${ticket?.user?.name || 'Customer'},\n\nI have personally reviewed your account details. Our operations team has escalated this case for manual verification. We will update you shortly.`;
+      setEditedText(overrideTemplate);
+    } else {
+      const infoTemplate = `Dear ${ticket?.user?.name || 'Customer'},\n\nCould you please confirm the exact time of the transaction, the recipient wallet number, and any error message received?`;
+      setEditedText(infoTemplate);
+    }
   };
 
   // Find mentioned transaction
@@ -110,247 +110,156 @@ export function AICopilot({ ticket, onUseReply }: AICopilotProps) {
 
   if (!ticket) {
     return (
-      <div className="copilot-panel">
+      <aside className="copilot-panel copilot-standby">
         <div className="copilot-header">
-          <h2>
-            <span className="copilot-indicator" />
-            AI Copilot Intelligence
-          </h2>
-          <span className="copilot-status-badge">Standby</span>
-        </div>
-        <div className="copilot-empty-container">
-          <div className="copilot-empty-icon">🤖</div>
-          <div className="copilot-empty-title">Investigation Panel Inactive</div>
-          <p className="copilot-empty-desc">
-            Select a case from the queue to view AI-extracted signals, transaction evidence,
-            confidence score, and recommended next actions.
-          </p>
-          <div className="copilot-empty-features">
-            <div className="empty-feature-item">
-              <span className="feature-check">✓</span>
-              <span>Automated intent classification</span>
-            </div>
-            <div className="empty-feature-item">
-              <span className="feature-check">✓</span>
-              <span>Core banking ledger verification</span>
-            </div>
-            <div className="empty-feature-item">
-              <span className="feature-check">✓</span>
-              <span>Human agent decision controls</span>
-            </div>
+          <div className="copilot-header-title">
+            <span className="copilot-dot-standby" />
+            <h3>AI Copilot</h3>
           </div>
+          <span className="copilot-badge-standby">Standby</span>
         </div>
-      </div>
+        <div className="copilot-standby-body">
+          <div className="standby-icon">✨</div>
+          <h4>Copilot Ready</h4>
+          <p>Select any case to view real-time AI assistance, auto-generated response drafts, and ledger verification.</p>
+        </div>
+      </aside>
     );
   }
 
   return (
-    <div className="copilot-panel">
-      {/* 1. Header */}
+    <aside className="copilot-panel">
+      {/* 1. Header with live status & confidence */}
       <div className="copilot-header">
-        <div className="copilot-header-title-row">
-          <h2>
-            <span className="copilot-indicator" />
-            AI Case Intelligence
-          </h2>
-          <span className="copilot-status-badge">Live Advisory</span>
+        <div className="copilot-header-title">
+          <span className="copilot-dot-live" />
+          <h3>AI Copilot</h3>
+          <span className="copilot-token-badge">{ticket.token}</span>
         </div>
-        <span className="copilot-subtext">Automated triage for {ticket.token}</span>
+        {aiEval && (
+          <span className="copilot-confidence-pill">
+            {aiEval.confidence}% confidence
+          </span>
+        )}
       </div>
 
-      <div className="copilot-body">
-        {/* 2. AI Decision Box: Recommendation, Confidence & Intent */}
+      <div className="copilot-content">
+        {/* 2. Recommendation Callout */}
         {aiEval && (
-          <div className="copilot-decision-card">
-            <div className="decision-card-top">
-              <div className="decision-label-group">
-                <span className="decision-micro-label">Recommendation</span>
-                <span className={`decision-rec-pill ${aiEval.badgeClass}`}>
-                  ● {aiEval.recommendation}
-                </span>
-              </div>
-
-              <div className="decision-conf-group">
-                <span className="decision-micro-label">Confidence</span>
-                <span className="decision-conf-value">{aiEval.confidence}%</span>
-              </div>
+          <div className="copilot-rec-card">
+            <div className="rec-card-top">
+              <span className="rec-tag">{aiEval.recommendation}</span>
+              <span className="rec-intent">{aiEval.categoryLabel}</span>
             </div>
-
-            {/* Confidence Progress Bar */}
-            <div className="confidence-track">
-              <div
-                className="confidence-fill"
-                style={{ width: `${aiEval.confidence}%` }}
-              />
-            </div>
-
-            <div className="decision-intent-row">
-              <span className="intent-label">Detected Intent:</span>
-              <span className="copilot-intent-tag">{aiEval.categoryLabel}</span>
-            </div>
+            <div className="rec-action-text">{aiEval.suggestedAction}</div>
           </div>
         )}
 
-        {/* 3. Why AI Recommended This (Signals & Evidence) */}
-        {aiEval && (
-          <div className="copilot-section">
-            <div className="copilot-section-header">
-              <span className="section-icon">🔍</span>
-              <span className="copilot-section-title">Why AI Recommended This</span>
+        {/* 3. Draft Reply Workspace */}
+        <div className="copilot-draft-card">
+          <div className="draft-card-header">
+            <span className="draft-header-label">Suggested Response Draft</span>
+            <div className="draft-quick-templates">
+              <button
+                type="button"
+                className="template-link"
+                onClick={() => handleApplyTemplate('info')}
+              >
+                + Ask Info
+              </button>
+              <button
+                type="button"
+                className="template-link"
+                onClick={() => handleApplyTemplate('override')}
+              >
+                + Escalate
+              </button>
             </div>
-            <div className="copilot-signals-card">
-              <ul className="copilot-signals-list">
-                {aiEval.reasoning.map((reason, idx) => (
-                  <li key={idx} className="copilot-signal-item">
-                    <span className="signal-bullet">▪</span>
-                    <span>{reason}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {/* 4. Suggested Next Action */}
-        {aiEval && (
-          <div className="copilot-section">
-            <div className="copilot-section-header">
-              <span className="section-icon">⚡</span>
-              <span className="copilot-section-title">Suggested Next Action</span>
-            </div>
-            <div className="copilot-next-action-card">
-              <div className="next-action-text">{aiEval.suggestedAction}</div>
-            </div>
-          </div>
-        )}
-
-        {/* 5. Agent Controls (Accept, Override, Request Info) */}
-        <div className="copilot-section">
-          <div className="copilot-section-header">
-            <span className="section-icon">🛡️</span>
-            <span className="copilot-section-title">Agent Controls (Human Decision)</span>
-          </div>
-          <div className="copilot-controls-row">
-            <button
-              type="button"
-              className="btn btn-primary btn-sm control-btn"
-              onClick={handleUseReply}
-              disabled={!editedText.trim()}
-              title="Accept AI recommendation and send reply to customer"
-            >
-              ✓ Accept & Send
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm control-btn"
-              onClick={handleOverride}
-              title="Override AI with manual agent review template"
-            >
-              Override AI
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm control-btn"
-              onClick={handleRequestInfo}
-              title="Ask customer for additional transaction details"
-            >
-              Request Info
-            </button>
-          </div>
-        </div>
-
-        {/* 6. Proposed Reply to Customer (Editable Textarea) */}
-        <div className="copilot-section">
-          <div className="copilot-section-header">
-            <span className="section-icon">💬</span>
-            <span className="copilot-section-title">Draft Reply to Customer</span>
           </div>
 
           {loading ? (
-            <div className="copilot-suggestion">
-              <div className="loading" style={{ padding: '16px 0' }}>
-                <div className="loading-spinner" />
-                <span className="loading-text">Generating new analysis...</span>
-              </div>
+            <div className="draft-loading">
+              <div className="loading-spinner" />
+              <span>Analyzing ledger and crafting reply...</span>
             </div>
           ) : (
-            <div className="copilot-suggestion">
-              <textarea
-                id="copilot-edit-area"
-                className="copilot-edit-area"
-                value={editedText}
-                onChange={(e) => setEditedText(e.target.value)}
-                rows={5}
-                placeholder="AI drafted response will appear here. You can edit before sending."
-              />
-              <div className="copilot-suggestion-actions">
-                <button
-                  id="copilot-use-reply"
-                  className="btn btn-primary btn-sm"
-                  onClick={handleUseReply}
-                  disabled={!editedText.trim()}
-                >
-                  Send to Customer
-                </button>
-                <button
-                  id="copilot-regenerate"
-                  className="btn btn-secondary btn-sm"
-                  onClick={handleRegenerate}
-                  disabled={loading}
-                  title="Ask AI to regenerate suggested reply"
-                >
-                  Regenerate
-                </button>
-              </div>
-            </div>
+            <textarea
+              id="copilot-edit-area"
+              className="draft-textarea"
+              value={editedText}
+              onChange={(e) => setEditedText(e.target.value)}
+              placeholder="AI generated response draft..."
+              rows={6}
+            />
           )}
 
-          {error && (
-            <div className="alert alert-error" style={{ marginTop: 8 }}>
-              {error}
-            </div>
-          )}
-        </div>
+          {error && <div className="alert alert-error">{error}</div>}
 
-        {/* 7. Customer Context Card */}
-        <div className="copilot-section">
-          <div className="copilot-section-header">
-            <span className="section-icon">👤</span>
-            <span className="copilot-section-title">Account Context</span>
-          </div>
-          <div className="copilot-context">
-            <div className="copilot-context-item">
-              <div className="copilot-context-label">Customer</div>
-              <div className="copilot-context-value">{ticket.user?.name || 'Unregistered'}</div>
-            </div>
-            <div className="copilot-context-item">
-              <div className="copilot-context-label">Wallet Number</div>
-              <div className="copilot-context-value">{ticket.phone}</div>
-            </div>
-            <div className="copilot-context-item">
-              <div className="copilot-context-label">Available Balance</div>
-              <div className="copilot-context-value">
-                ৳{formatBDT(ticket.user?.balance)}
-              </div>
-            </div>
-            <div className="copilot-context-item">
-              <div className="copilot-context-label">Active Ticket</div>
-              <div className="copilot-context-value">
-                {ticket.token} ({ticket.messages.length} msgs)
-              </div>
-            </div>
+          <div className="draft-actions">
+            <button
+              id="copilot-regenerate"
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={handleRegenerate}
+              disabled={loading}
+            >
+              Regenerate
+            </button>
+            <button
+              id="copilot-use-reply"
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={handleUseReply}
+              disabled={!editedText.trim() || loading}
+            >
+              Accept & Send Reply
+            </button>
           </div>
         </div>
 
-        {/* 8. Responsible AI Governance Banner */}
-        <div className="copilot-governance-notice">
-          <div className="governance-title">Responsible AI Governance</div>
-          <p className="governance-text">
-            AI provides triage analysis and suggested communication. Financial adjustments,
-            reversals, and account actions require explicit authorization by a human support agent.
-          </p>
+        {/* 4. Investigation Evidence / Rationale */}
+        {aiEval && aiEval.reasoning.length > 0 && (
+          <div className="copilot-evidence-card">
+            <div className="evidence-header">AI Investigation Signals</div>
+            <ul className="evidence-list">
+              {aiEval.reasoning.map((r, idx) => (
+                <li key={idx} className="evidence-item">
+                  <span className="evidence-dot">✓</span>
+                  <span>{r}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* 5. Account Context Snapshot */}
+        <div className="copilot-profile-card">
+          <div className="profile-card-header">Customer Snapshot</div>
+          <div className="profile-grid">
+            <div className="profile-col">
+              <span className="profile-label">Customer</span>
+              <span className="profile-value">{ticket.user?.name || 'Unregistered'}</span>
+            </div>
+            <div className="profile-col">
+              <span className="profile-label">Phone</span>
+              <span className="profile-value">{ticket.phone}</span>
+            </div>
+            <div className="profile-col">
+              <span className="profile-label">Balance</span>
+              <span className="profile-value">৳{formatBDT(ticket.user?.balance)}</span>
+            </div>
+            <div className="profile-col">
+              <span className="profile-label">History</span>
+              <span className="profile-value">{ticket.messages.length} messages</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 6. Human in the loop footer notice */}
+        <div className="copilot-footer-notice">
+          <span>Responsible AI: Requires human confirmation before dispatch.</span>
         </div>
       </div>
-    </div>
+    </aside>
   );
 }
