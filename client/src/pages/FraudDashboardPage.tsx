@@ -13,6 +13,10 @@ export function FraudDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
 
+  useEffect(() => {
+    document.title = 'SupportIQ — Fraud Audit Center';
+  }, []);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {

@@ -1,0 +1,81 @@
+[
+  {
+    "token": "TKT-0001",
+    "phone": "01712345678",
+    "status": "open",
+    "category": "payment_failure",
+    "timeOffsetMinutes": -45,
+    "updatedOffsetMinutes": -30,
+    "messages": [
+      { "role": "customer", "content": "I tried to send money to 01612345678 but the transaction failed. The money was deducted from my account but the receiver says they didn't get it.", "timeOffsetMinutes": -45 },
+      { "role": "ai", "content": "I can see you have a recent transaction (TX-1003) to 01612345678 for ৳1,000 that shows as completed. Could you provide more details about when this happened? If this is a different transaction, I'll look into it further. Failed transactions typically auto-reverse within 24-72 hours.", "timeOffsetMinutes": -44 },
+      { "role": "customer", "content": "It happened about 30 minutes ago. I sent ৳3000 but it is not showing in my history.", "timeOffsetMinutes": -30 }
+    ]
+  },
+  {
+    "token": "TKT-0002",
+    "phone": "01312345678",
+    "status": "open",
+    "category": "payment_failure",
+    "timeOffsetMinutes": -20,
+    "updatedOffsetMinutes": -19,
+    "messages": [
+      { "role": "customer", "content": "My transaction TX-1005 failed but the money was deducted. I only have ৳900 left. Please help!", "timeOffsetMinutes": -20 },
+      { "role": "ai", "content": "I can see your transaction TX-1005 for ৳3,000 to 01812345678 has a \"failed\" status. Your current balance is ৳900. For failed transactions, the amount is typically auto-reversed within 24-72 hours. I'm flagging this for priority review. Is there anything else I can help with?", "timeOffsetMinutes": -19 }
+    ]
+  },
+  {
+    "token": "TKT-0003",
+    "phone": "01812345678",
+    "status": "in_progress",
+    "category": "wrong_recipient",
+    "timeOffsetMinutes": -180,
+    "updatedOffsetMinutes": -120,
+    "messages": [
+      { "role": "customer", "content": "I sent ৳1500 to 01112345678 but I meant to send it to 01912345678. Can you reverse it?", "timeOffsetMinutes": -180 },
+      { "role": "ai", "content": "I can see your transaction TX-1006 for ৳1,500 sent to 01112345678. I understand you meant to send it to 01912345678. I'll initiate a reversal request. This typically takes 24-48 hours. Could you confirm the correct recipient number one more time?", "timeOffsetMinutes": -179 },
+      { "role": "customer", "content": "Yes, it should have gone to 01912345678. Please reverse it.", "timeOffsetMinutes": -150 },
+      { "role": "agent", "content": "Hi Karim, I've reviewed your case and submitted a reversal request for TX-1006 (৳1,500). The reversal should be processed within 24-48 hours. I'll update you once it's confirmed. Your reference number is TKT-0003.", "timeOffsetMinutes": -120 }
+    ]
+  },
+  {
+    "token": "TKT-0004",
+    "phone": "01998765432",
+    "status": "open",
+    "category": "fraud_dispute",
+    "timeOffsetMinutes": -600,
+    "updatedOffsetMinutes": -500,
+    "messages": [
+      { "role": "customer", "content": "I just saw a ৳5000 deduction on my account (TX-1013), but I did not make this transaction! Someone hacked my account.", "timeOffsetMinutes": -600 },
+      { "role": "ai", "content": "I understand this is concerning. I see a completed transaction TX-1013 for ৳5,000 sent to 01998765432. For your security, I can temporarily freeze your outgoing transfers and escalate this to our Fraud Team. Shall I proceed with freezing the account?", "timeOffsetMinutes": -599 },
+      { "role": "customer", "content": "Yes, please freeze it and get my money back.", "timeOffsetMinutes": -500 }
+    ]
+  },
+  {
+    "token": "TKT-0005",
+    "phone": "01698765432",
+    "status": "closed",
+    "category": "account_locked",
+    "timeOffsetMinutes": -2880,
+    "updatedOffsetMinutes": -1440,
+    "messages": [
+      { "role": "customer", "content": "My account is locked. I think I entered the wrong PIN too many times.", "timeOffsetMinutes": -2880 },
+      { "role": "ai", "content": "I can help with that. To verify your identity, I will send a 4-digit OTP to your registered phone number (01698765432). Please reply with the OTP once you receive it.", "timeOffsetMinutes": -2879 },
+      { "role": "customer", "content": "4892", "timeOffsetMinutes": -2875 },
+      { "role": "ai", "content": "Thank you for verifying. Your account has been temporarily unlocked. Please try logging in again and you will be prompted to set a new PIN.", "timeOffsetMinutes": -2874 },
+      { "role": "customer", "content": "It works now, thanks.", "timeOffsetMinutes": -1440 }
+    ]
+  },
+  {
+    "token": "TKT-0006",
+    "phone": "01798765432",
+    "status": "open",
+    "category": "balance_inquiry",
+    "timeOffsetMinutes": -10,
+    "updatedOffsetMinutes": -5,
+    "messages": [
+      { "role": "customer", "content": "Why was I charged a 5tk fee for my 450tk send money (TX-1009)? I thought send money was free under 500.", "timeOffsetMinutes": -10 },
+      { "role": "ai", "content": "Send Money is free up to ৳500 to your PRIYO numbers. Since the recipient (01712345678) is not on your PRIYO list, standard charges apply. You can add them to your PRIYO list to avoid future fees.", "timeOffsetMinutes": -5 }
+    ]
+  }
+]

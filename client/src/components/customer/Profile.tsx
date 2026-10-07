@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { updateUserName } from '../../api/index';
 import type { User } from '../../types/index';
+import { formatBDT, initials } from './mfsUtils';
+import { BackIcon, ShieldIcon } from './icons';
 
 interface ProfileProps {
   user: User;
@@ -35,26 +37,32 @@ export function Profile({ user, onUpdate, onBack }: ProfileProps) {
 
   return (
     <div className="profile-section">
-      <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ marginBottom: 16 }}>
-        ← Back
+      <button type="button" className="mfs-back" onClick={onBack}>
+        <BackIcon size={16} /> Home
       </button>
 
       <div className="profile-card">
-        <h2 className="profile-title">Profile</h2>
+        <div className="mfs-profile-head">
+          <span className="mfs-avatar mfs-avatar-lg">{initials(user.name)}</span>
+          <div>
+            <h2 className="profile-title">{user.name || 'PayFlow User'}</h2>
+            <div className="mfs-profile-sub"><ShieldIcon size={13} /> Wallet active · Fraud monitoring on</div>
+          </div>
+        </div>
 
         <form className="profile-form" onSubmit={handleSave}>
           <div className="field-group">
-            <label className="field-label">Phone Number</label>
+            <label className="field-label">Wallet number</label>
             <input className="input" type="text" value={user.phone} disabled />
           </div>
 
           <div className="field-group">
-            <label className="field-label">Balance</label>
-            <input className="input" type="text" value={`৳${user.balance.toLocaleString()}`} disabled />
+            <label className="field-label">Available balance</label>
+            <input className="input" type="text" value={`৳${formatBDT(user.balance)}`} disabled />
           </div>
 
           <div className="field-group">
-            <label className="field-label" htmlFor="profile-name">Name</label>
+            <label className="field-label" htmlFor="profile-name">Full name</label>
             <input
               id="profile-name"
               className="input"

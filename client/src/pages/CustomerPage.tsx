@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { User } from '../types/index';
 import { LoginScreen } from '../components/customer/LoginScreen';
 import { Dashboard } from '../components/customer/Dashboard';
@@ -6,9 +6,17 @@ import { Dashboard } from '../components/customer/Dashboard';
 export function CustomerPage() {
   const [user, setUser] = useState<User | null>(null);
 
-  if (!user) {
-    return <LoginScreen onLogin={setUser} />;
-  }
+  useEffect(() => {
+    document.title = 'PayFlow — Secured MFS Wallet';
+  }, []);
 
-  return <Dashboard user={user} onLogout={() => setUser(null)} />;
+  return (
+    <div className="mfs">
+      {user ? (
+        <Dashboard user={user} onLogout={() => setUser(null)} />
+      ) : (
+        <LoginScreen onLogin={setUser} />
+      )}
+    </div>
+  );
 }

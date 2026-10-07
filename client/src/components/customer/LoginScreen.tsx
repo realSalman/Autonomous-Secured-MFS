@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { login } from '../../api/index';
 import type { User } from '../../types/index';
+import { BrandMark, LockIcon, ShieldIcon } from './icons';
 
 interface LoginScreenProps {
   onLogin: (user: User) => void;
@@ -31,8 +32,11 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
   return (
     <div className="login-container">
       <div className="login-card">
-        <h1 className="login-title">PayFlow</h1>
-        <p className="login-subtitle">Enter your phone number to continue</p>
+        <div className="mfs-login-brand">
+          <BrandMark size={40} />
+          <h1 className="login-title">PayFlow</h1>
+        </div>
+        <p className="login-subtitle">Send money and get transaction support. Enter your wallet number to continue.</p>
 
         <form className="login-form" onSubmit={handleSubmit}>
           <input
@@ -56,16 +60,16 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
             disabled={loading || !phone.trim()}
             style={{ width: '100%' }}
           >
-            {loading ? 'Connecting...' : 'Enter'}
+            {loading ? 'Connecting...' : 'Continue'}
           </button>
         </form>
 
-        <p style={{
-          marginTop: 24,
-          fontSize: 11,
-          color: 'var(--color-text-tertiary)',
-          textAlign: 'center',
-        }}>
+        <div className="mfs-login-trust">
+          <span><ShieldIcon size={14} /> Fraud monitoring on every transfer</span>
+          <span><LockIcon size={14} /> Secure wallet session</span>
+        </div>
+
+        <p className="mfs-login-demo">
           Demo accounts: 01712345678, 01812345678, 01912345678
         </p>
       </div>
