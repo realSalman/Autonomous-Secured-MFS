@@ -16,6 +16,7 @@
 ---
 
 [Overview](#-overview) •
+[Technical Deep Dives](#-technical-deep-dives) •
 [Key Features](#-key-features) •
 [How It Works](#-how-it-works) •
 [Architecture](#-technical-architecture) •
@@ -54,6 +55,21 @@ Mobile Financial Services — services like bKash, Nagad, M-Pesa, and GCash — 
 | 🧑‍💼 **MFS Operators & Fintechs** | A production-ready support + fraud platform to integrate into existing mobile money services |
 | 🎓 **Researchers & Students** | A reference implementation showing how LangGraph AI agents, XGBoost fraud models, and event-driven architectures work together in a real-world system |
 | 👩‍💻 **Developers** | A clean, well-structured full-stack TypeScript codebase demonstrating modern patterns: monorepo workspaces, Drizzle ORM, React SPA with Express API, Kafka event streaming, and Docker orchestration |
+
+---
+
+## 📚 Technical Deep Dives
+
+To address the competition judges' specific technical feedback, we have created comprehensive deep-dive documentation detailing our implementation:
+
+| Documentation | Covers |
+|--------------|--------|
+| [**1. AI & ML Depth**](docs/01-AI-ML-DEPTH.md) | XGBoost/ONNX architecture, 64-feature pipeline, LangGraph agent design, explainability |
+| [**2. Business Impact**](docs/02-BUSINESS-IMPACT.md) | Financial savings, customer experience metrics, revenue protection modeling |
+| [**3. Scalability & Integration**](docs/03-SCALABILITY-INTEGRATION.md) | Kafka event topology, Redis caching, DB schema, horizontally scalable design |
+| [**4. Responsible AI & Security**](docs/04-RESPONSIBLE-AI-SECURITY.md) | Defense of the fail-open policy, human-in-the-loop, privacy, fallback degradation |
+| [**5. Innovation**](docs/05-INNOVATION.md) | Graph-based features, multi-stage decisions, live shadow scoring, unified loop |
+| [**6. Prototype Quality**](docs/06-PROTOTYPE-QUALITY.md) | Calibration probes, context sensitivity checks, resilience testing, automation |
 
 ---
 
